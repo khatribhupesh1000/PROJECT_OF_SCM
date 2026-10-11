@@ -179,6 +179,104 @@ export function formatShortDate(isoString) {
 }
 
 /**
+ * Generates and downloads a standard vCard 3.0 file for Apple / Google Contacts
+ */
+export function downloadVCard(contact, onNotify) {
+  if (!contact || !contact.name) return;
+
+  const fullName = String(contact.name).trim();
+  const nameParts = fullName.split(/\s+/);
+  const firstName = nameParts[0] || "";
+  const lastName = nameParts.length > 1 ? nameParts.slice(1).join(" ") : "";
+  const phone = contact.phoneNumber || "";
+  const email = contact.email || "";
+  const address = contact.address || "";
+  const company = contact.company || "";
+  const description = contact.description || "";
+
+  const vcard = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `FN:${fullName}`,
+    `N:${lastName};${firstName};;;`,
+    email ? `EMAIL;TYPE=INTERNET:${email}` : "",
+    phone ? `TEL;TYPE=CELL:${phone}` : "",
+    address ? `ADR;TYPE=WORK:;;${address.replace(/[\r\n]+/g, " ")};;;;` : "",
+    company ? `ORG:${company}` : "",
+    description ? `TITLE:${description.replace(/[\r\n]+/g, " ")}` : "",
+    "END:VCARD"
+  ]
+    .filter(Boolean)
+    .join("\r\n");
+
+  const blob = new Blob([vcard], { type: "text/vcard;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  const fileName = `${fullName.replace(/\s+/g, "_")}.vcf`;
+  link.setAttribute("download", fileName);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  onNotify?.({
+    variant: "success",
+    title: "vCard downloaded!",
+    detail: "Open file to save to phone contacts."
+  });
+}
+
+/**
+ * Returns formatted status and styling badge for follow-up reminder dates
+ */
+export function getFollowUpStatus(followUpDate) {
+  if (!followUpDate) return null;
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const dateStr = String(followUpDate).slice(0, 10);
+    const dateParts = dateStr.split("-");
+    if (dateParts.length !== 3) return null;
+    const target = new Date(Number(dateParts[0]), Number(dateParts[1]) - 1, Number(dateParts[2]));
+    target.setHours(0, 0, 0, 0);
+
+    const diffDays = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    const formatted = target.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+    if (diffDays < 0) {
+      return {
+        label: `Overdue: ${formatted}`,
+        isOverdue: true,
+        style: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800/60"
+      };
+    }
+    if (diffDays === 0) {
+      return {
+        label: "Follow up: Today",
+        isToday: true,
+        style: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60"
+      };
+    }
+    if (diffDays === 1) {
+      return {
+        label: "Follow up: Tomorrow",
+        isTomorrow: true,
+        style: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60"
+      };
+    }
+    return {
+      label: `Follow up: ${formatted}`,
+      isUpcoming: true,
+      style: "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700"
+    };
+  } catch (_e) {
+    return null;
+  }
+}
+
+/**
  * Infer Timezone, Region & Working Hours Intelligence for a contact
  */
 export function getLocationAndTimezoneInfo(contact) {

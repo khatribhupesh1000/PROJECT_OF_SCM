@@ -12,10 +12,13 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Clock,
+  Merge
 } from "lucide-react";
 import ContactModal from "../components/ContactModal.jsx";
 import ContactDrawer, { getTagBadgeStyle } from "../components/ContactDrawer.jsx";
+import DuplicateMergeModal from "../components/DuplicateMergeModal.jsx";
 import { formatPhoneForWhatsApp } from "../components/CallWhatsAppActions.jsx";
 import {
   contactApi,
@@ -23,12 +26,15 @@ import {
   formatPhoneWithFlag,
   getInitials,
   inferContactTag,
-  formatShortDate
+  formatShortDate,
+  downloadVCard,
+  getFollowUpStatus
 } from "../services/api.js";
 
 const SEGMENT_TABS = [
   { id: "ALL", label: "All Contacts" },
   { id: "FAVORITES", label: "Favorites" },
+  { id: "FOLLOW_UPS", label: "⏰ Follow-ups" },
   { id: "VIP", label: "VIP" },
   { id: "Colleague", label: "Colleague" },
   { id: "Lead", label: "Lead" },
@@ -57,9 +63,59 @@ export default function ContactsList({
   const [editingContact, setEditingContact] = useState(null);
   const [inspectedContact, setInspectedContact] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const [selectedDuplicatePair, setSelectedDuplicatePair] = useState(null);
+  const [mergingDuplicates, setMergingDuplicates] = useState(false);
+  const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
 
   const searchInputRef = useRef(null);
   const fetchSeqRef = useRef(0);
+
+  // Scan loaded contacts for duplicate normalized phone numbers or emails
+  const duplicatePairs = React.useMemo(() => {
+    const pairs = [];
+    const seenPhone = new Map();
+    const seenEmail = new Map();
+
+    for (const c of contacts) {
+      const rawDigits = (c.phoneNumber || "").replace(/\D/g, "");
+      const phoneKey = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+      const emailKey = (c.email || "").trim().toLowerCase();
+
+      let match = null;
+      let reason = "";
+
+      if (phoneKey && phoneKey.length >= 7) {
+        if (seenPhone.has(phoneKey)) {
+          match = seenPhone.get(phoneKey);
+          reason = "same phone number";
+        } else {
+          seenPhone.set(phoneKey, c);
+        }
+      }
+
+      if (!match && emailKey) {
+        if (seenEmail.has(emailKey)) {
+          match = seenEmail.get(emailKey);
+          reason = "same email address";
+        } else {
+          seenEmail.set(emailKey, c);
+        }
+      }
+
+      if (match && match.id !== c.id) {
+        pairs.push({ primary: match, duplicate: c, reason });
+      }
+    }
+    return pairs;
+  }, [contacts]);
+
+  // Filter contacts client-side for Follow-ups tab
+  const displayedContacts = React.useMemo(() => {
+    if (activeSegment === "FOLLOW_UPS") {
+      return contacts.filter((c) => Boolean(c.followUpDate));
+    }
+    return contacts;
+  }, [contacts, activeSegment]);
 
   // Respond to Command Palette or Navbar triggers
   useEffect(() => {
@@ -139,7 +195,7 @@ export default function ContactsList({
     try {
       const favoriteParam = activeSegment === "FAVORITES" ? true : null;
       const tagParam =
-        activeSegment !== "ALL" && activeSegment !== "FAVORITES"
+        activeSegment !== "ALL" && activeSegment !== "FAVORITES" && activeSegment !== "FOLLOW_UPS"
           ? activeSegment
           : null;
 
@@ -231,6 +287,55 @@ export default function ContactsList({
       });
     } catch (err) {
       onNotify({ variant: "error", ...parseRfc7807Error(err) });
+    }
+  };
+
+  const handleUpdateFollowUpDate = async (contact, newDate) => {
+    try {
+      const updated = await contactApi.patch(contact.id, {
+        followUpDate: newDate
+      });
+      setContacts((prev) => prev.map((c) => (c.id === contact.id ? updated : c)));
+      if (inspectedContact?.id === contact.id) {
+        setInspectedContact(updated);
+      }
+      onNotify({
+        variant: "success",
+        title: newDate ? "Follow-up scheduled" : "Follow-up cleared",
+        detail: newDate ? `${updated.name}: reminder set for ${newDate}` : `Reminder removed for ${updated.name}`
+      });
+    } catch (err) {
+      onNotify({ variant: "error", ...parseRfc7807Error(err) });
+    }
+  };
+
+  const handleMergeDuplicates = async ({ primaryId, duplicateId, mergedPayload }) => {
+    setMergingDuplicates(true);
+    try {
+      const updated = await contactApi.update(primaryId, mergedPayload);
+      await contactApi.remove(duplicateId);
+
+      setContacts((prev) =>
+        prev
+          .map((c) => (c.id === primaryId ? updated : c))
+          .filter((c) => c.id !== duplicateId)
+      );
+      if (inspectedContact?.id === duplicateId) {
+        setInspectedContact(updated);
+      } else if (inspectedContact?.id === primaryId) {
+        setInspectedContact(updated);
+      }
+      setSelectedDuplicatePair(null);
+      onNotify({
+        variant: "success",
+        title: "Contacts merged successfully!",
+        detail: `${mergedPayload.name} updated; duplicate entry removed.`
+      });
+      await fetchContacts(currentCursor);
+    } catch (err) {
+      onNotify({ variant: "error", ...parseRfc7807Error(err) });
+    } finally {
+      setMergingDuplicates(false);
     }
   };
 
@@ -401,6 +506,36 @@ export default function ContactsList({
         </div>
       </div>
 
+      {/* ⚠️ Discreet Smart Duplicate Detector Top Banner */}
+      {!dismissedDuplicates && duplicatePairs.length > 0 && (
+        <div className="mb-3.5 p-3 rounded-lg border border-amber-300 dark:border-amber-700/60 bg-amber-50/90 dark:bg-amber-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-900 dark:text-amber-200 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <span className="text-base shrink-0">⚠️</span>
+            <span>
+              <strong>{duplicatePairs.length} duplicate contact{duplicatePairs.length > 1 ? "s" : ""} detected</strong>
+              {" "}(e.g., <span className="font-semibold">{duplicatePairs[0].primary.name}</span> and <span className="font-semibold">{duplicatePairs[0].duplicate.name}</span> share the {duplicatePairs[0].reason}).
+            </span>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <button
+              type="button"
+              onClick={() => setSelectedDuplicatePair(duplicatePairs[0])}
+              className="px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-600 hover:bg-amber-500 text-white shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 active:scale-[0.98]"
+            >
+              Review &amp; Merge
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissedDuplicates(true)}
+              className="p-1 text-amber-700 dark:text-amber-400 hover:text-amber-900 dark:hover:text-amber-200 text-xs rounded hover:bg-amber-100 dark:hover:bg-amber-900/50"
+              title="Dismiss alert"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Linear/Supabase Filter & Search Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 pb-3">
         {/* Segment Tabs */}
@@ -424,6 +559,9 @@ export default function ContactsList({
               >
                 {tab.id === "FAVORITES" && (
                   <Star className={`w-3 h-3 ${active ? "fill-current" : ""}`} />
+                )}
+                {tab.id === "FOLLOW_UPS" && (
+                  <Clock className="w-3 h-3 text-amber-500" />
                 )}
                 <span>{tab.label}</span>
               </button>
@@ -507,7 +645,7 @@ export default function ContactsList({
                     </td>
                   </tr>
                 ))
-              ) : contacts.length === 0 ? (
+              ) : displayedContacts.length === 0 ? (
                 /* Thoughtful Empty State */
                 <tr>
                   <td colSpan={7} className="py-14 px-4 text-center">
@@ -516,37 +654,44 @@ export default function ContactsList({
                         <SlidersHorizontal className="w-4 h-4" />
                       </div>
                       <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                        No contacts matching &ldquo;{searchInput || activeSegment}&rdquo; — Press{" "}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSearchInput("");
-                            setActiveSegment("ALL");
-                          }}
-                          className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                        >
-                          [Esc]
-                        </button>{" "}
-                        to clear or{" "}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingContact(null);
-                            setModalOpen(true);
-                          }}
-                          className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
-                        >
-                          [N]
-                        </button>{" "}
-                        to create new contact.
+                        {activeSegment === "FOLLOW_UPS" ? (
+                          <span>No contacts have follow-up reminders scheduled. Open any contact to set a reminder date.</span>
+                        ) : (
+                          <>
+                            No contacts matching &ldquo;{searchInput || activeSegment}&rdquo; — Press{" "}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSearchInput("");
+                                setActiveSegment("ALL");
+                              }}
+                              className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                            >
+                              [Esc]
+                            </button>{" "}
+                            to clear or{" "}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingContact(null);
+                                setModalOpen(true);
+                              }}
+                              className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
+                            >
+                              [N]
+                            </button>{" "}
+                            to create new contact.
+                          </>
+                        )}
                       </p>
                     </div>
                   </td>
                 </tr>
               ) : (
-                contacts.map((contact) => {
+                displayedContacts.map((contact) => {
                   const phoneInfo = formatPhoneWithFlag(contact.phoneNumber);
                   const tag = inferContactTag(contact);
+                  const followUp = getFollowUpStatus(contact.followUpDate);
                   const isSelected = inspectedContact?.id === contact.id;
                   const waHref = `https://wa.me/${formatPhoneForWhatsApp(
                     contact.phoneNumber
@@ -584,7 +729,7 @@ export default function ContactsList({
                         </button>
                       </td>
 
-                      {/* Contact Avatar + Name */}
+                      {/* Contact Avatar + Name + Follow-up badge */}
                       <td className="py-2.5 px-3">
                         <div className="flex items-center gap-2.5 min-w-0">
                           {contact.pictureUrl ? (
@@ -599,8 +744,17 @@ export default function ContactsList({
                             </span>
                           )}
                           <div className="min-w-0">
-                            <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate">
-                              {contact.name}
+                            <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate flex items-center gap-1.5">
+                              <span className="truncate">{contact.name}</span>
+                              {followUp && (
+                                <span
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-medium border shrink-0 ${followUp.style}`}
+                                  title={`Follow up date: ${contact.followUpDate}`}
+                                >
+                                  <Clock className="w-2.5 h-2.5" />
+                                  <span>{followUp.label}</span>
+                                </span>
+                              )}
                             </div>
                             <div className="text-[11px] text-zinc-400 md:hidden truncate">
                               {contact.description || contact.email}
@@ -697,6 +851,18 @@ export default function ContactsList({
 
                           <button
                             type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              downloadVCard(contact, onNotify);
+                            }}
+                            title="Download vCard (.vcf)"
+                            className="p-1 rounded text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-200/60 dark:hover:bg-zinc-700 transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => {
                               setEditingContact(contact);
                               setModalOpen(true);
@@ -729,7 +895,7 @@ export default function ContactsList({
         <div className="px-4 py-2.5 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
           <div className="flex items-center gap-4 font-mono">
             <span>
-              Showing {contacts.length} of {totalCount}
+              Showing {displayedContacts.length} of {totalCount}
             </span>
             <span className="hidden md:inline text-zinc-400 dark:text-zinc-600">•</span>
             <span className="hidden md:inline text-zinc-400 dark:text-zinc-500">
@@ -767,6 +933,7 @@ export default function ContactsList({
         onToggleFavorite={handleToggleFavorite}
         onUpdateTag={handleUpdateTag}
         onUpdateNotes={handleUpdateNotes}
+        onUpdateFollowUpDate={handleUpdateFollowUpDate}
         onEdit={(c) => {
           setEditingContact(c);
           setModalOpen(true);
@@ -790,6 +957,15 @@ export default function ContactsList({
         onClose={() => setModalOpen(false)}
         onSave={handleSaveModal}
         onNotify={onNotify}
+      />
+
+      {/* Duplicate Merge Modal */}
+      <DuplicateMergeModal
+        isOpen={Boolean(selectedDuplicatePair)}
+        pair={selectedDuplicatePair}
+        onClose={() => setSelectedDuplicatePair(null)}
+        onMerge={handleMergeDuplicates}
+        merging={mergingDuplicates}
       />
     </div>
   );
