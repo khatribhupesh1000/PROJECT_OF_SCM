@@ -156,7 +156,7 @@ export default function Login({ onAuthSuccess, onNotify }) {
 
   const handleGoogleLogin = (intent = "login") => {
     const GOOGLE_CLIENT_ID = "";
-    const REDIRECT_URI = encodeURIComponent("http://localhost:8080/v1/auth/oauth2/google/callback");
+    const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
     const SCOPE = encodeURIComponent("openid profile email");
     
     // prompt=select_account forces Google to show all accounts on the device

@@ -927,7 +927,7 @@ const GOOGLE_CLIENT_SECRET =
   "";
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ||
-  "http://localhost:8080/v1/auth/oauth2/google/callback";
+  "http://localhost:8081/login/oauth2/code/google";
 const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:3000";
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "Ov23liScmGithubOAuthClientId";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "scm_github_oauth_secret";
@@ -1130,9 +1130,9 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
     let tokenData = await tokenRes.json();
     if (!tokenRes.ok || !tokenData.access_token) {
       if (tokenData.error === "redirect_uri_mismatch") {
-        const altUri = redirectUriToUse.includes(":8080")
-          ? "http://localhost:8081/login/oauth2/code/google"
-          : "http://localhost:8080/v1/auth/oauth2/google/callback";
+        const altUri = redirectUriToUse.includes(":8081")
+          ? "http://localhost:8080/v1/auth/oauth2/google/callback"
+          : "http://localhost:8081/login/oauth2/code/google";
         const retryRes = await fetch("https://oauth2.googleapis.com/token", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },

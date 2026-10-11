@@ -68,7 +68,7 @@ export default function Signup({ onNotify }) {
 
   const handleGoogleSignup = () => {
     const GOOGLE_CLIENT_ID = "";
-    const REDIRECT_URI = encodeURIComponent("http://localhost:8080/v1/auth/oauth2/google/callback");
+    const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
     const SCOPE = encodeURIComponent("openid profile email");
     const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "signup" }))}`;
     window.location.href = googleAuthUrl;
