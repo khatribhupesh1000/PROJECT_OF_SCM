@@ -1,0 +1,111 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://scm.enterprise.io/schemas/contact-schema.json",
+  "title": "SmartContact",
+  "description": "Enterprise JSON Schema Draft-07 definition for a Smart Contact Manager Contact entity.",
+  "type": "object",
+  "required": [
+    "name",
+    "phoneNumber"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "userId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
+    },
+    "name": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 120
+    },
+    "email": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "email",
+          "maxLength": 180
+        },
+        {
+          "type": "string",
+          "maxLength": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "phoneNumber": {
+      "type": "string",
+      "pattern": "^\\+?[0-9\\-\\s()]{7,20}$"
+    },
+    "address": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 300
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 1000
+    },
+    "favorite": {
+      "type": "boolean",
+      "default": false
+    },
+    "tag": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40
+    },
+    "company": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 120
+    },
+    "websiteLink": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "linkedInLink": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 500
+    },
+    "pictureUrl": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

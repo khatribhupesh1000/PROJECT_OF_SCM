@@ -1,0 +1,18 @@
+server:
+  port: ${SERVER_PORT:8086}
+
+spring:
+  application:
+    name: integration-service
+
+outbound:
+  timeout-ms: ${OUTBOUND_TIMEOUT_MS:3000}
+
+retry:
+  max-attempts: ${RETRY_MAX_ATTEMPTS:3}
+  base-delay-ms: ${RETRY_BASE_DELAY_MS:10}
+
+circuit:
+  breaker:
+    failure-threshold: ${CIRCUIT_BREAKER_FAILURE_THRESHOLD:2}
+    reset-timeout-ms: ${CIRCUIT_BREAKER_RESET_TIMEOUT_MS:10000}

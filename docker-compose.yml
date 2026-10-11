@@ -1,0 +1,225 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: scm-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-scm_root_password}
+      MYSQL_DATABASE: ${DB_NAME:-scm}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scm-network
+
+  mongodb:
+    image: mongo:7.0
+    container_name: scm-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scm-network
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_MODULE: auth-service
+    container_name: scm-auth-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8081
+      DB_URL: jdbc:mysql://mysql:3306/${DB_NAME:-scm}?useSSL=false&serverTimezone=UTC&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-scm_root_password}
+      DB_DRIVER: com.mysql.cj.jdbc.Driver
+      JWT_SECRET: ${JWT_SECRET:-ScmEnterpriseHmacSha256SuperSecretSigningKeyForJwtTokens2026!@#}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
+      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-google-client-id-placeholder}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-google-client-secret-placeholder}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-github-client-id-placeholder}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-github-client-secret-placeholder}
+    ports:
+      - "8081:8081"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - scm-network
+
+  contact-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_MODULE: contact-service
+    container_name: scm-contact-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8082
+      DB_URL: jdbc:mysql://mysql:3306/${DB_NAME:-scm}?useSSL=false&serverTimezone=UTC&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_PASSWORD:-scm_root_password}
+      DB_DRIVER: com.mysql.cj.jdbc.Driver
+      JWT_SECRET: ${JWT_SECRET:-ScmEnterpriseHmacSha256SuperSecretSigningKeyForJwtTokens2026!@#}
+      AUDIT_SERVICE_URL: http://audit-service:8085
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8082:8082"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - scm-network
+
+  media-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_MODULE: media-service
+    container_name: scm-media-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8083
+      MEDIA_MAX_FILE_SIZE_BYTES: ${MEDIA_MAX_FILE_SIZE_BYTES:-2097152}
+      MEDIA_ALLOWED_MIME_TYPES: ${MEDIA_ALLOWED_MIME_TYPES:-image/jpeg,image/png,image/webp}
+      JWT_SECRET: ${JWT_SECRET:-ScmEnterpriseHmacSha256SuperSecretSigningKeyForJwtTokens2026!@#}
+    ports:
+      - "8083:8083"
+    networks:
+      - scm-network
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_MODULE: notification-service
+    container_name: scm-notification-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8084
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-587}
+      MAIL_USERNAME: ${MAIL_USERNAME:-your_gmail_address@gmail.com}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-your_gmail_app_password}
+      MAIL_FROM: ${MAIL_FROM:-your_gmail_address@gmail.com}
+    ports:
+      - "8084:8084"
+    networks:
+      - scm-network
+
+  audit-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_MODULE: audit-service
+    container_name: scm-audit-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8085
+      MONGODB_URI: mongodb://mongodb:27017/${MONGO_DB:-scm_audit_store}
+    ports:
+      - "8085:8085"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - scm-network
+
+  integration-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE_MODULE: integration-service
+    container_name: scm-integration-service
+    restart: unless-stopped
+    environment:
+      SERVER_PORT: 8086
+      OUTBOUND_TIMEOUT_MS: ${OUTBOUND_TIMEOUT_MS:-3000}
+      RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-3}
+      RETRY_BASE_DELAY_MS: ${RETRY_BASE_DELAY_MS:-100}
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: ${CIRCUIT_BREAKER_FAILURE_THRESHOLD:-3}
+      CIRCUIT_BREAKER_RESET_TIMEOUT_MS: ${CIRCUIT_BREAKER_RESET_TIMEOUT_MS:-10000}
+    ports:
+      - "8086:8086"
+    networks:
+      - scm-network
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: scm-api-gateway
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      AUTH_SERVICE_URL: http://auth-service:8081
+      CONTACT_SERVICE_URL: http://contact-service:8082
+      MEDIA_SERVICE_URL: http://media-service:8083
+      NOTIFICATION_SERVICE_URL: http://notification-service:8084
+      AUDIT_SERVICE_URL: http://audit-service:8085
+      INTEGRATION_SERVICE_URL: http://integration-service:8086
+      JWT_SECRET: ${JWT_SECRET:-ScmEnterpriseHmacSha256SuperSecretSigningKeyForJwtTokens2026!@#}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-google-client-id-placeholder}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-google-client-secret-placeholder}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-github-client-id-placeholder}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-github-client-secret-placeholder}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      OUTBOUND_TIMEOUT_MS: ${OUTBOUND_TIMEOUT_MS:-3000}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - auth-service
+      - contact-service
+      - media-service
+      - notification-service
+      - audit-service
+      - integration-service
+    networks:
+      - scm-network
+
+  frontend-react:
+    build:
+      context: ./frontend-react
+      dockerfile: Dockerfile
+    container_name: scm-frontend-react
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    networks:
+      - scm-network
+
+volumes:
+  mysql_data:
+  mongo_data:
+
+networks:
+  scm-network:
+    driver: bridge

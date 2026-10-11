@@ -1,0 +1,22 @@
+{
+  "name": "scm-api-gateway",
+  "version": "1.0.0",
+  "description": "Smart Contact Manager Edge API Gateway (Express.js ES Modules)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "validate-schema": "node validate-schema.js",
+    "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --runInBand"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "2.1.1",
+    "express": "4.22.3",
+    "js-yaml": "3.15.2"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "supertest": "6.3.4"
+  }
+}

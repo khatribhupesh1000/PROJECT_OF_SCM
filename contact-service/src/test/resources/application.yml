@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: contact-service
+  datasource:
+    url: jdbc:h2:mem:scmcontactdb;MODE=MySQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false

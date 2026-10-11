@@ -1,0 +1,515 @@
+openapi: 3.0.3
+info:
+  title: Smart Contact Manager (SCM) Enterprise Microservices API
+  version: 1.0.0
+  description: |
+    Hand-crafted OpenAPI 3.0.3 specification for the Service-Based Smart Contact Manager (SCM) platform.
+    Covers RESTful `/v1/*` resources, RFC 7807 Problem Details (`application/problem+json` & `application/problem+xml`),
+    O(1) Cursor Pagination (`Link` rel="next"), Idempotency-Key replay, ETag (`304 Not Modified`),
+    Sliding Token Bucket Rate Limiting (`429 Too Many Requests`), Stateless JWT & Google OAuth2,
+    MongoDB NoSQL Document Store (`/v1/documents/{collection}`), SOAP/WSDL Execution (`/v1/soap/execute`),
+    3-State Circuit Breaker (`/v1/resilience/status`), and GraphQL (`/graphql`).
+  contact:
+    name: SCM Cloud Architecture Team
+    email: architecture@scm.enterprise.io
+servers:
+  - url: http://localhost:8080
+    description: Local Edge API Gateway (Express Sidecar / Reverse Proxy)
+  - url: https://scm-api-gateway.onrender.com
+    description: Production Render Cloud Deployment
+
+tags:
+  - name: Auth
+    description: Stateless HMAC-SHA256 JWT tokens, BCrypt registration, RBAC, and Google OAuth2
+  - name: Contacts
+    description: Core Contacts CRUD (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS), ETag, Idempotency, XML/JSON
+  - name: Media
+    description: Contact avatar photo uploads (max 2MB, JPG/PNG/WebP validation)
+  - name: Notifications
+    description: Resilient async SMTP email worker (Welcome, Reset, Security Alerts)
+  - name: Documents
+    description: MongoDB 7.0 schemaless NoSQL document store for audit & activity logs
+  - name: Integration
+    description: Legacy WSDL inspection, SOAP 1.1 outbound client, and 3-state Circuit Breaker
+  - name: GraphQL
+    description: Flexible GraphQL query & schema introspection endpoint alongside REST
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Stateless HMAC-SHA256 JWT token issued by `POST /v1/auth/tokens`
+
+  parameters:
+    CorrelationIdHeader:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+      description: Distributed tracing Correlation ID propagated across all microservices.
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Unique key to safely replay POST requests without duplicate side-effects.
+    IfNoneMatchHeader:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+      description: Conditional ETag header; returns 304 Not Modified when matching current entity ETag.
+
+  schemas:
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+        - timestamp
+        - correlationId
+      xml:
+        name: problem
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://scm.enterprise.io/problems/unprocessable-entity
+        title:
+          type: string
+          example: Unprocessable Entity
+        status:
+          type: integer
+          example: 422
+        detail:
+          type: string
+          example: Contact payload failed semantic schema validation.
+        instance:
+          type: string
+          example: /v1/contacts
+        timestamp:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+          example: 8f14e45f-ceea-467f-a8c9-10f92b3b2199
+        errors:
+          type: object
+          additionalProperties:
+            type: string
+
+    Contact:
+      type: object
+      required:
+        - name
+        - email
+        - phoneNumber
+      xml:
+        name: Contact
+      properties:
+        id:
+          type: string
+          example: cnt-1001
+        userId:
+          type: string
+          example: usr-1001
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+          example: Aarav Patel
+        email:
+          type: string
+          format: email
+          example: aarav.patel@scm.enterprise.io
+        phoneNumber:
+          type: string
+          pattern: '^\+?[0-9\-\s()]{7,20}$'
+          example: "+919876543210"
+        address:
+          type: string
+          example: Bengaluru Tech Park, KA
+        description:
+          type: string
+          example: Principal Cloud Architect
+        favorite:
+          type: boolean
+          default: false
+        websiteLink:
+          type: string
+          format: uri
+          example: https://scm.enterprise.io
+        linkedInLink:
+          type: string
+          format: uri
+          example: https://linkedin.com/in/aaravpatel
+        pictureUrl:
+          type: string
+          example: /v1/media/photos/med-1001
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContactPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contact'
+        nextCursor:
+          type: string
+          nullable: true
+          example: Y250LTEwMDE
+        hasMore:
+          type: boolean
+          example: true
+        limit:
+          type: integer
+          example: 10
+        totalCount:
+          type: integer
+          example: 25
+
+paths:
+  /v1/auth/users:
+    post:
+      tags: [Auth]
+      summary: Register a new user account with BCrypt password hashing
+      responses:
+        '201':
+          description: User registered and JWT issued
+        '422':
+          description: Semantic validation failure
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v1/auth/tokens:
+    post:
+      tags: [Auth]
+      summary: Issue a stateless HMAC-SHA256 JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '201':
+          description: JWT token issued
+        '400':
+          description: Malformed credentials syntax
+        '401':
+          description: Invalid email or password
+    delete:
+      tags: [Auth]
+      summary: Revoke active session token
+      responses:
+        '204':
+          description: Token revoked (No Content)
+
+  /v1/auth/oauth2/google:
+    get:
+      tags: [Auth]
+      summary: Initiate Google OAuth2 / OIDC authorization redirect
+      responses:
+        '302':
+          description: Redirects to Google OAuth2 consent screen
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /v1/auth/admin/users:
+    get:
+      tags: [Auth]
+      summary: List all users (requires ROLE_ADMIN)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Admin user list
+        '401':
+          description: Missing or invalid JWT token
+        '403':
+          description: Authenticated user lacks ROLE_ADMIN authority
+
+  /v1/contacts:
+    get:
+      tags: [Contacts]
+      summary: List contacts with O(1) cursor pagination and Cache-Control
+      parameters:
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: favorite
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Paginated contact list
+          headers:
+            Link:
+              description: RFC 5988 next page cursor link
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                example: public, max-age=60, must-revalidate
+            X-RateLimit-Limit:
+              schema:
+                type: integer
+            X-RateLimit-Remaining:
+              schema:
+                type: integer
+            X-RateLimit-Reset:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactPage'
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/ContactPage'
+        '429':
+          description: Rate limit exceeded (100 req/min)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      tags: [Contacts]
+      summary: Create a new contact with Idempotency-Key and Ajv schema validation
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Contact'
+          application/xml:
+            schema:
+              $ref: '#/components/schemas/Contact'
+      responses:
+        '201':
+          description: Contact created
+          headers:
+            Location:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+        '400':
+          description: Malformed syntax
+        '422':
+          description: Unprocessable Entity (failed JSON schema validation)
+    head:
+      tags: [Contacts]
+      summary: Retrieve collection metadata headers without body
+      responses:
+        '200':
+          description: Metadata headers returned
+    options:
+      tags: [Contacts]
+      summary: Discover allowed HTTP methods on /v1/contacts
+      responses:
+        '200':
+          description: Allow header returned
+
+  /v1/contacts/{id}:
+    get:
+      tags: [Contacts]
+      summary: Retrieve a single contact by ID with ETag, 304 Not Modified, and JSON/XML negotiation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/IfNoneMatchHeader'
+      responses:
+        '200':
+          description: Contact found
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                example: public, max-age=300, must-revalidate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+            application/xml:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '304':
+          description: Not Modified (ETag matched If-None-Match)
+        '404':
+          description: Contact not found
+    put:
+      tags: [Contacts]
+      summary: Replace an entire contact resource
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Contact'
+      responses:
+        '200':
+          description: Contact replaced
+        '404':
+          description: Contact not found
+    patch:
+      tags: [Contacts]
+      summary: Partially update contact fields (e.g., favorite toggle)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Contact updated
+        '404':
+          description: Contact not found
+    delete:
+      tags: [Contacts]
+      summary: Delete a contact resource
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Contact deleted (No Content)
+        '404':
+          description: Contact not found
+
+  /v1/media/photos:
+    post:
+      tags: [Media]
+      summary: Upload a contact photo (max 2MB, JPG/PNG/WebP)
+      responses:
+        '201':
+          description: Photo uploaded
+        '422':
+          description: File exceeds 2MB or unsupported MIME type
+
+  /v1/notifications/emails:
+    post:
+      tags: [Notifications]
+      summary: Dispatch resilient async email notification
+      responses:
+        '201':
+          description: Notification dispatched or queued safely
+
+  /v1/documents/{collection}:
+    get:
+      tags: [Documents]
+      summary: Query schemaless NoSQL documents in a collection
+      parameters:
+        - name: collection
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Collection documents returned
+    post:
+      tags: [Documents]
+      summary: Store a schemaless NoSQL document in MongoDB 7.0
+      parameters:
+        - name: collection
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Document stored
+
+  /v1/soap/execute:
+    post:
+      tags: [Integration]
+      summary: Parse WSDL and execute outbound SOAP 1.1 XML request with SOAPAction header
+      parameters:
+        - name: SOAPAction
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: SOAP response envelope parsed and returned
+
+  /v1/resilience/status:
+    get:
+      tags: [Integration]
+      summary: Inspect 3-state Circuit Breaker (CLOSED, OPEN, HALF_OPEN), retry backoff, and 3s timeout status
+      responses:
+        '200':
+          description: Current resilience state
+
+  /graphql:
+    post:
+      tags: [GraphQL]
+      summary: Execute GraphQL queries, mutations, and __schema introspection
+      responses:
+        '200':
+          description: GraphQL execution result

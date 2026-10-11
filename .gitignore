@@ -1,0 +1,10 @@
+node_modules/
+frontend-react/node_modules/
+api-gateway/node_modules/
+target/
+*/target/
+.env
+.env.local
+*.log
+.DS_Store
+coverage/

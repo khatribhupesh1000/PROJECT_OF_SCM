@@ -1,0 +1,35 @@
+{
+  "name": "scm-microservices",
+  "version": "1.0.0",
+  "description": "Smart Contact Manager (SCM) Enterprise Microservices - Edge Gateway & Automated Verification Suite",
+  "type": "module",
+  "main": "api-gateway/src/server.js",
+  "scripts": {
+    "start": "node api-gateway/src/server.js",
+    "validate-schema": "node validate-schema.js",
+    "test": "node validate-schema.js && node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+    "tunnel": "npx cloudflared tunnel --url http://localhost:8080"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/tests/**/*.test.js"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/scm-microservices",
+      "<rootDir>/frontend-react"
+    ]
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "2.1.1",
+    "express": "4.22.3",
+    "js-yaml": "3.15.2",
+    "mongodb": "^7.7.0",
+    "nodemailer": "^10.1.0"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "supertest": "6.3.4"
+  }
+}

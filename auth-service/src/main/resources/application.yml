@@ -1,0 +1,51 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/scm}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: ${DB_DRIVER:com.mysql.cj.jdbc.Driver}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    open-in-view: false
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:google-client-id-placeholder}
+            client-secret: ${GOOGLE_CLIENT_SECRET:google-client-secret-placeholder}
+            scope:
+              - openid
+              - profile
+              - email
+          github:
+            client-id: ${GITHUB_CLIENT_ID:github-client-id-placeholder}
+            client-secret: ${GITHUB_CLIENT_SECRET:github-client-secret-placeholder}
+            scope:
+              - read:user
+              - user:email
+
+jwt:
+  secret: ${JWT_SECRET:ScmEnterpriseHmacSha256SuperSecretSigningKeyForJwtTokens2026!@#}
+  expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+
+google:
+  oauth2:
+    client-id: ${GOOGLE_CLIENT_ID:google-client-id-placeholder}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:http://localhost:8081/login/oauth2/code/google}
+
+github:
+  oauth2:
+    client-id: ${GITHUB_CLIENT_ID:Ov23liScmGithubOAuthClientId}
+    redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:8080/v1/auth/oauth2/github/callback}
+
+notification:
+  service:
+    url: ${NOTIFICATION_SERVICE_URL:http://localhost:8084}
