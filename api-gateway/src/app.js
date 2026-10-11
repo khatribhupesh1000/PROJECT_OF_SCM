@@ -989,10 +989,6 @@ function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, inten
     String(name || "").trim() ||
     cleanEmail.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-  if (isLiveDbEnabled()) {
-    try { loadUsersFromMysql(usersStore); } catch (_e) {}
-  }
-
   let user = usersStore.get(cleanEmail);
   const isNewUser = !user;
 
@@ -1181,9 +1177,6 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
     const cleanEmail = String(profile.email).trim().toLowerCase();
     const cleanName = profile.name || cleanEmail.split("@")[0];
 
-    if (isLiveDbEnabled()) {
-      try { loadUsersFromMysql(usersStore); } catch (_e) {}
-    }
     const existingUser = usersStore.get(cleanEmail);
 
     if (intent === "login") {
