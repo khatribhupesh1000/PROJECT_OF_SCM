@@ -92,14 +92,18 @@ function ensureAivenTables() {
         DB_PORT,
         "-u",
         DB_USER,
-        `-p${DB_PASS}`,
         `--ssl-mode=${DB_SSL_MODE}`,
         "--connect-timeout=2",
         DB_NAME,
         "-e",
         ddl
       ],
-      { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }
+      {
+        encoding: "utf8",
+        timeout: 3000,
+        env: { ...process.env, MYSQL_PWD: DB_PASS },
+        stdio: ["ignore", "pipe", "ignore"]
+      }
     );
     aivenSchemaReady = true;
   } catch (_e) {
@@ -117,7 +121,6 @@ export function runMysqlQuery(sql) {
       [
         "-u",
         LOCAL_DB_USER,
-        `-p${LOCAL_DB_PASS}`,
         "--batch",
         "--raw",
         "--skip-column-names",
@@ -125,7 +128,12 @@ export function runMysqlQuery(sql) {
         "-e",
         sql
       ],
-      { encoding: "utf8", timeout: 2500, stdio: ["ignore", "pipe", "ignore"] }
+      {
+        encoding: "utf8",
+        timeout: 1000,
+        env: { ...process.env, MYSQL_PWD: LOCAL_DB_PASS },
+        stdio: ["ignore", "pipe", "ignore"]
+      }
     ).trim();
   } catch (_err) {
     out = "";
@@ -144,14 +152,17 @@ export function runMysqlQuery(sql) {
           DB_PORT,
           "-u",
           DB_USER,
-          `-p${DB_PASS}`,
           `--ssl-mode=${DB_SSL_MODE}`,
           "--connect-timeout=3",
           DB_NAME,
           "-e",
           sql
         ],
-        { timeout: 5000 },
+        {
+          timeout: 5000,
+          env: { ...process.env, MYSQL_PWD: DB_PASS },
+          stdio: ["ignore", "ignore", "ignore"]
+        },
         () => {}
       );
     } else if (!out) {
@@ -166,7 +177,6 @@ export function runMysqlQuery(sql) {
             DB_PORT,
             "-u",
             DB_USER,
-            `-p${DB_PASS}`,
             `--ssl-mode=${DB_SSL_MODE}`,
             "--connect-timeout=2",
             "--batch",
@@ -176,7 +186,12 @@ export function runMysqlQuery(sql) {
             "-e",
             sql
           ],
-          { encoding: "utf8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"] }
+          {
+            encoding: "utf8",
+            timeout: 2000,
+            env: { ...process.env, MYSQL_PWD: DB_PASS },
+            stdio: ["ignore", "pipe", "ignore"]
+          }
         ).trim();
       } catch (_aivenErr) {
         out = "";

@@ -992,15 +992,6 @@ function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, inten
   let user = usersStore.get(cleanEmail);
   const isNewUser = !user;
 
-  // Strictly block unregistered Google logins on /login
-  if (intent !== "signup" && !user) {
-    throw new HttpProblemError(
-      404,
-      "Not Found",
-      "No account found with this email. Please sign up first."
-    );
-  }
-
   if (!user) {
     user = {
       id: crypto.randomUUID(),
@@ -1177,15 +1168,7 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
     const cleanEmail = String(profile.email).trim().toLowerCase();
     const cleanName = profile.name || cleanEmail.split("@")[0];
 
-    const existingUser = usersStore.get(cleanEmail);
-
     if (intent === "login") {
-      if (!existingUser) {
-        return res.redirect(
-          `${FRONTEND_BASE_URL}/signup?oauth_error=no_account_found&email=${encodeURIComponent(cleanEmail)}`
-        );
-      }
-
       const envelope = provisionGoogleUserAndNotify({
         email: cleanEmail,
         name: cleanName,
