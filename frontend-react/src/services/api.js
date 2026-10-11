@@ -667,38 +667,51 @@ export const aiApi = {
     }
   },
 
-  async draftEmail({ contactName, company, prompt }) {
+  async draftEmail({ contactName, company, prompt, senderName }) {
     try {
       const response = await api.post("/v1/ai/draft-email", {
         contactName,
         company,
-        prompt
+        prompt,
+        senderName
       });
       return response.data;
     } catch (_err) {
       // Resilient client-side fallback (handles offline, 404, or stale gateway process)
       const cName = contactName && String(contactName).trim() ? String(contactName).trim() : "there";
+      const sName = senderName && String(senderName).trim() ? String(senderName).trim() : "Smart Contact Manager";
       const cCompany = company && String(company).trim() ? String(company).trim() : "";
       const trimmedPrompt = String(prompt || "").trim();
       const companyMention = cCompany ? ` at ${cCompany}` : "";
       const promptLower = trimmedPrompt.toLowerCase();
 
       let subject;
-      if (promptLower.includes("thank")) {
-        subject = `Thank you - Follow up regarding our discussion`;
-      } else if (promptLower.includes("coffee") || promptLower.includes("meeting")) {
-        subject = `Great meeting you${companyMention} - Next steps`;
+      let body;
+
+      if (promptLower.includes("coffee")) {
+        subject = "Thank you for the coffee chat!";
+        body = `Hi ${cName},\n\nIt was great catching up over coffee today! Really enjoyed our conversation and hearing your thoughts.\n\nLet's stay in touch and connect again soon.\n\nBest regards,\n${sName}`;
+      } else if (promptLower.includes("meeting") || promptLower.includes("follow up") || promptLower.includes("follow-up")) {
+        subject = `Great meeting you${companyMention} - Follow up`;
+        body = `Hi ${cName},\n\nThank you for taking the time to meet today. I wanted to quickly follow up on our discussion and align on the next steps.\n\nPlease let me know your thoughts or when you might be free for a quick chat.\n\nBest regards,\n${sName}`;
+      } else if (promptLower.includes("congrat") || promptLower.includes("congratulations")) {
+        subject = "Congratulations!";
+        body = `Hi ${cName},\n\nWanted to send my warmest congratulations on your exciting news! Wishing you all the continued success.\n\nWarm regards,\n${sName}`;
       } else if (promptLower.includes("contract") || promptLower.includes("proposal")) {
         subject = `Follow up: Contract & Proposal Discussion${companyMention}`;
-      } else if (promptLower.includes("schedule") || promptLower.includes("call")) {
-        subject = `Quick sync on our upcoming roadmap`;
+        body = `Hi ${cName},\n\nI hope you're having a productive week${companyMention ? ` at ${cCompany}` : ""}.\n\nI'm following up on our proposal and contract terms we discussed.\n\nPlease let me know if you have any questions or if you'd like to make adjustments.\n\nBest regards,\n${sName}`;
+      } else if (promptLower.includes("schedule") || promptLower.includes("call") || promptLower.includes("sync")) {
+        subject = "Quick sync: Schedule a call";
+        body = `Hi ${cName},\n\nHope all is well. I'd love to schedule a brief call this week to catch up and align on our next steps.\n\nLet me know what time works best for you.\n\nBest regards,\n${sName}`;
+      } else if (promptLower.includes("thank")) {
+        subject = "Thank you - Follow up regarding our discussion";
+        body = `Hi ${cName},\n\nThank you for your time and for connecting with me${companyMention ? ` at ${cCompany}` : ""}. I really appreciate our conversation and look forward to continuing our collaboration.\n\nPlease let me know if there is anything else I can provide on my end.\n\nBest regards,\n${sName}`;
       } else {
         let cleanPrompt = trimmedPrompt.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
         if (cleanPrompt.length > 40) cleanPrompt = cleanPrompt.substring(0, 40).trim() + "...";
         subject = `Follow-up: ${cleanPrompt}`;
+        body = `Hi ${cName},\n\nI hope this email finds you well${companyMention ? ` at ${cCompany}` : ""}.\n\nI wanted to reach out regarding ${trimmedPrompt}. I believe this is a great opportunity to collaborate and ensure everything is aligned smoothly.\n\nPlease let me know your availability for a brief conversation this week, or feel free to share your thoughts over email.\n\nBest regards,\n${sName}`;
       }
-
-      const body = `Hi ${cName},\n\nI hope you're having a productive week${companyMention ? ` at ${cCompany}` : ""}.\n\nI wanted to follow up regarding: ${trimmedPrompt}.\n\nPlease let me know your thoughts or when you might have a few minutes for a brief call to align on the next steps.\n\nLooking forward to speaking with you.\n\nBest regards,\nSmart Contact Manager Team`;
 
       return { subject, body };
     }

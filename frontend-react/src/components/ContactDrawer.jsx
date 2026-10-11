@@ -80,9 +80,23 @@ export default function ContactDrawer({
     if (!aiDraftPrompt.trim()) return;
     setAiDrafting(true);
     try {
+      let senderName = "Smart Contact Manager";
+      try {
+        const storedProfile = localStorage.getItem("scm_user_profile");
+        if (storedProfile) {
+          const parsed = JSON.parse(storedProfile);
+          if (parsed?.name && String(parsed.name).trim()) {
+            senderName = String(parsed.name).trim();
+          }
+        }
+      } catch (_) {}
+
+      const recipientName = (contact?.name && String(contact.name).trim()) || "there";
+
       const result = await aiApi.draftEmail({
-        contactName: contact.name,
-        company: contact.company,
+        contactName: recipientName,
+        senderName,
+        company: contact?.company || "",
         prompt: aiDraftPrompt.trim()
       });
       if (result.subject) setEmailSubject(result.subject);
@@ -425,17 +439,27 @@ export default function ContactDrawer({
                     <Send className="w-3 h-3" />
                     <span>SCM Mail Service</span>
                   </span>
-                  {hasEmail && (
-                    <a
-                      href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(contact.email)}&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[10px] font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAiDraftOpen((prev) => !prev)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-emerald-700 dark:text-emerald-300 bg-emerald-100/80 dark:bg-emerald-900/40 hover:bg-emerald-200/80 dark:hover:bg-emerald-800/60 transition-colors"
                     >
-                      <ExternalLink className="w-3 h-3" />
-                      <span>Open in Gmail</span>
-                    </a>
-                  )}
+                      <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                      <span>{aiDraftOpen ? "Close AI" : "✨ Draft with AI"}</span>
+                    </button>
+                    {hasEmail && (
+                      <a
+                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(contact.email)}&su=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        <span>Open in Gmail</span>
+                      </a>
+                    )}
+                  </div>
                 </div>
 
                 {!hasEmail ? (
@@ -445,16 +469,8 @@ export default function ContactDrawer({
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
                       <span className="truncate">To: {contact.email}</span>
-                      <button
-                        type="button"
-                        onClick={() => setAiDraftOpen((prev) => !prev)}
-                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100/70 dark:bg-emerald-900/40 hover:bg-emerald-200/70 dark:hover:bg-emerald-800/60 transition-colors"
-                      >
-                        <Sparkles className="w-2.5 h-2.5" />
-                        <span>{aiDraftOpen ? "Close AI" : "✨ Draft with AI"}</span>
-                      </button>
                     </div>
 
                     {aiDraftOpen && (
@@ -490,25 +506,14 @@ export default function ContactDrawer({
                       </div>
                     )}
 
-                    <div className="flex items-center gap-1.5">
+                    <div>
                       <input
                         type="text"
                         placeholder="Subject"
                         value={emailSubject}
                         onChange={(e) => setEmailSubject(e.target.value)}
-                        className="flex-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-emerald-400 dark:focus:border-emerald-600 focus:outline-none"
+                        className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-emerald-400 dark:focus:border-emerald-600 focus:outline-none"
                       />
-                      {!aiDraftOpen && (
-                        <button
-                          type="button"
-                          onClick={() => setAiDraftOpen(true)}
-                          title="Draft with AI"
-                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-xs font-medium transition-all shrink-0 active:scale-[0.98]"
-                        >
-                          <Sparkles className="w-3 h-3" />
-                          <span className="hidden sm:inline">✨ Draft with AI</span>
-                        </button>
-                      )}
                     </div>
                     <textarea
                       rows={3}

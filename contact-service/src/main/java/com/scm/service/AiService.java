@@ -49,6 +49,7 @@ public class AiService {
         String contactName = request != null && request.getContactName() != null ? request.getContactName().trim() : "there";
         String company = request != null && request.getCompany() != null ? request.getCompany().trim() : "";
         String prompt = request != null && request.getPrompt() != null ? request.getPrompt().trim() : "Follow up";
+        String senderName = request != null && request.getSenderName() != null && !request.getSenderName().trim().isEmpty() ? request.getSenderName().trim() : "Smart Contact Manager";
 
         if (openAiApiKey != null && !openAiApiKey.trim().isEmpty() && !openAiApiKey.equalsIgnoreCase("dummy") && !openAiApiKey.contains("placeholder")) {
             try {
@@ -58,7 +59,7 @@ public class AiService {
             }
         }
 
-        return fallbackDraftEmail(contactName, company, prompt);
+        return fallbackDraftEmail(contactName, company, prompt, senderName);
     }
 
     /**
@@ -141,38 +142,67 @@ public class AiService {
      * Context-aware, polite email draft generator with subject and professional body.
      */
     public DraftEmailResponse fallbackDraftEmail(String contactName, String company, String prompt) {
-        String greeting = "Hi " + (contactName.isEmpty() ? "there" : contactName) + ",";
-        String companyMention = company != null && !company.isEmpty() ? " at " + company : "";
+        return fallbackDraftEmail(contactName, company, prompt, "Smart Contact Manager");
+    }
 
-        // Generate intelligent subject line
+    public DraftEmailResponse fallbackDraftEmail(String contactName, String company, String prompt, String senderName) {
+        String greeting = "Hi " + (contactName == null || contactName.trim().isEmpty() ? "there" : contactName.trim()) + ",";
+        String sName = senderName == null || senderName.trim().isEmpty() ? "Smart Contact Manager" : senderName.trim();
+        String companyMention = company != null && !company.trim().isEmpty() ? " at " + company.trim() : "";
+        String trimmedPrompt = prompt != null ? prompt.trim() : "";
+        String promptLower = trimmedPrompt.toLowerCase();
+
         String subject;
-        String promptLower = prompt.toLowerCase();
-        if (promptLower.contains("thank")) {
-            subject = "Thank you - Follow up regarding our discussion";
-        } else if (promptLower.contains("coffee") || promptLower.contains("meeting")) {
-            subject = "Great meeting you" + companyMention + " - Next steps";
+        StringBuilder body = new StringBuilder();
+
+        if (promptLower.contains("coffee")) {
+            subject = "Thank you for the coffee chat!";
+            body.append(greeting).append("\n\n");
+            body.append("It was great catching up over coffee today! Really enjoyed our conversation and hearing your thoughts.\n\n");
+            body.append("Let's stay in touch and connect again soon.\n\n");
+            body.append("Best regards,\n").append(sName);
+        } else if (promptLower.contains("meeting") || promptLower.contains("follow up") || promptLower.contains("follow-up")) {
+            subject = "Great meeting you" + companyMention + " - Follow up";
+            body.append(greeting).append("\n\n");
+            body.append("Thank you for taking the time to meet today. I wanted to quickly follow up on our discussion and align on the next steps.\n\n");
+            body.append("Please let me know your thoughts or when you might be free for a quick chat.\n\n");
+            body.append("Best regards,\n").append(sName);
+        } else if (promptLower.contains("congrat") || promptLower.contains("congratulations")) {
+            subject = "Congratulations!";
+            body.append(greeting).append("\n\n");
+            body.append("Wanted to send my warmest congratulations on your exciting news! Wishing you all the continued success.\n\n");
+            body.append("Warm regards,\n").append(sName);
         } else if (promptLower.contains("contract") || promptLower.contains("proposal")) {
             subject = "Follow up: Contract & Proposal Discussion" + companyMention;
-        } else if (promptLower.contains("schedule") || promptLower.contains("call")) {
-            subject = "Quick sync on our upcoming roadmap";
+            body.append(greeting).append("\n\n");
+            body.append("I hope you're having a productive week").append(companyMention.isEmpty() ? "." : companyMention + ".").append("\n\n");
+            body.append("I'm following up on our proposal and contract terms we discussed.\n\n");
+            body.append("Please let me know if you have any questions or if you'd like to make adjustments.\n\n");
+            body.append("Best regards,\n").append(sName);
+        } else if (promptLower.contains("schedule") || promptLower.contains("call") || promptLower.contains("sync")) {
+            subject = "Quick sync: Schedule a call";
+            body.append(greeting).append("\n\n");
+            body.append("Hope all is well. I'd love to schedule a brief call this week to catch up and align on our next steps.\n\n");
+            body.append("Let me know what time works best for you.\n\n");
+            body.append("Best regards,\n").append(sName);
+        } else if (promptLower.contains("thank")) {
+            subject = "Thank you - Follow up regarding our discussion";
+            body.append(greeting).append("\n\n");
+            body.append("Thank you for your time and for connecting with me").append(companyMention.isEmpty() ? "." : companyMention + ".").append(" I really appreciate our conversation and look forward to continuing our collaboration.\n\n");
+            body.append("Please let me know if there is anything else I can provide on my end.\n\n");
+            body.append("Best regards,\n").append(sName);
         } else {
-            // Capitalize first 4-5 words of prompt
-            String cleanPrompt = prompt.replaceAll("[^a-zA-Z0-9\\s]", " ").trim();
+            String cleanPrompt = trimmedPrompt.replaceAll("[^a-zA-Z0-9\\s]", " ").trim();
             if (cleanPrompt.length() > 40) {
                 cleanPrompt = cleanPrompt.substring(0, 40).trim() + "...";
             }
             subject = "Follow-up: " + cleanPrompt;
+            body.append(greeting).append("\n\n");
+            body.append("I hope this email finds you well").append(companyMention.isEmpty() ? "." : companyMention + ".").append("\n\n");
+            body.append("I wanted to reach out regarding ").append(trimmedPrompt).append(". I believe this is a great opportunity to collaborate and ensure everything is aligned smoothly.\n\n");
+            body.append("Please let me know your availability for a brief conversation this week, or feel free to share your thoughts over email.\n\n");
+            body.append("Best regards,\n").append(sName);
         }
-
-        // Generate professional email body
-        StringBuilder body = new StringBuilder();
-        body.append(greeting).append("\n\n");
-        body.append("I hope you're having a great week").append(companyMention.isEmpty() ? "." : " at " + company + ".").append("\n\n");
-        body.append("I am reaching out regarding: ").append(prompt.trim()).append(".\n\n");
-        body.append("Please let me know if you have any questions or when you might be available for a brief discussion to align on the next steps.\n\n");
-        body.append("Looking forward to hearing from you.\n\n");
-        body.append("Best regards,\n");
-        body.append("Smart Contact Manager Team");
 
         return new DraftEmailResponse(subject, body.toString());
     }

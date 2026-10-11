@@ -2223,7 +2223,7 @@ app.post("/v1/ai/parse-contact", async (req, res, next) => {
 app.post("/v1/ai/draft-email", async (req, res, next) => {
   try {
     assertSupportedAccept(req);
-    const { contactName, company, prompt } = req.body || {};
+    const { contactName, company, prompt, senderName } = req.body || {};
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       throw new HttpProblemError(
         400,
@@ -2234,8 +2234,85 @@ app.post("/v1/ai/draft-email", async (req, res, next) => {
 
     const trimmedPrompt = prompt.trim();
     const cName = contactName && String(contactName).trim() ? String(contactName).trim() : "there";
+    const sName = senderName && String(senderName).trim() ? String(senderName).trim() : "Smart Contact Manager";
     const cCompany = company && String(company).trim() ? String(company).trim() : "";
     const correlationId = req.headers["x-correlation-id"] || crypto.randomUUID();
+
+    // 0. Live AI Service Connection (OpenAI / Gemini) if API keys are configured
+    const openAiKey = process.env.OPENAI_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY;
+
+    if (openAiKey) {
+      try {
+        const aiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openAiKey}`
+          },
+          body: JSON.stringify({
+            model: "gpt-3.5-turbo",
+            messages: [
+              {
+                role: "system",
+                content: "You are a professional email assistant. Return strictly a JSON object with 'subject' and 'body' keys."
+              },
+              {
+                role: "user",
+                content: `Write a short, friendly, professional business email from ${sName} to ${cName}${cCompany ? ` at ${cCompany}` : ""}. Context/Goal: ${trimmedPrompt}. Return JSON with 'subject' and 'body'.`
+              }
+            ],
+            temperature: 0.7
+          })
+        });
+        if (aiResp.ok) {
+          const aiData = await aiResp.json();
+          const content = aiData?.choices?.[0]?.message?.content;
+          if (content) {
+            const parsed = JSON.parse(content.replace(/```json|```/g, "").trim());
+            if (parsed.subject && parsed.body) {
+              res.setHeader("Cache-Control", "no-store");
+              return res.status(200).json({ subject: parsed.subject, body: parsed.body });
+            }
+          }
+        }
+      } catch (_aiErr) {
+        // Fall back gracefully to internal engine
+      }
+    } else if (geminiKey) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`;
+        const aiResp = await fetch(geminiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  {
+                    text: `You are a professional email assistant. Write a short, friendly, professional business email from ${sName} to ${cName}${cCompany ? ` at ${cCompany}` : ""}. Context/Goal: ${trimmedPrompt}. Return strictly JSON with keys "subject" and "body".`
+                  }
+                ]
+              }
+            ],
+            generationConfig: { responseMimeType: "application/json" }
+          })
+        });
+        if (aiResp.ok) {
+          const aiData = await aiResp.json();
+          const content = aiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (content) {
+            const parsed = JSON.parse(content.trim());
+            if (parsed.subject && parsed.body) {
+              res.setHeader("Cache-Control", "no-store");
+              return res.status(200).json({ subject: parsed.subject, body: parsed.body });
+            }
+          }
+        }
+      } catch (_geminiErr) {
+        // Fall back gracefully
+      }
+    }
 
     // 1. Attempt downstream dispatch to Spring Boot contact-service (port 8082)
     try {
@@ -2247,7 +2324,7 @@ app.post("/v1/ai/draft-email", async (req, res, next) => {
           "Content-Type": "application/json",
           "X-Correlation-ID": correlationId
         },
-        body: JSON.stringify({ contactName: cName, company: cCompany, prompt: trimmedPrompt }),
+        body: JSON.stringify({ contactName: cName, company: cCompany, prompt: trimmedPrompt, senderName: sName }),
         signal: abortCtrl.signal
       });
       clearTimeout(timeoutId);
@@ -2261,27 +2338,36 @@ app.post("/v1/ai/draft-email", async (req, res, next) => {
       // Graceful fallback: contact-service offline or timed out
     }
 
-    // 2. Resilient Built-in Spring AI Email Drafter
-    const greeting = `Hi ${cName},`;
+    // 2. Resilient Built-in Context-Aware Email Drafter
     const companyMention = cCompany ? ` at ${cCompany}` : "";
-    let subject;
     const promptLower = trimmedPrompt.toLowerCase();
+    let subject;
+    let body;
 
-    if (promptLower.includes("thank")) {
-      subject = `Thank you - Follow up regarding our discussion`;
-    } else if (promptLower.includes("coffee") || promptLower.includes("meeting")) {
-      subject = `Great meeting you${companyMention} - Next steps`;
+    if (promptLower.includes("coffee")) {
+      subject = "Thank you for the coffee chat!";
+      body = `Hi ${cName},\n\nIt was great catching up over coffee today! Really enjoyed our conversation and hearing your thoughts.\n\nLet's stay in touch and connect again soon.\n\nBest regards,\n${sName}`;
+    } else if (promptLower.includes("meeting") || promptLower.includes("follow up") || promptLower.includes("follow-up")) {
+      subject = `Great meeting you${companyMention} - Follow up`;
+      body = `Hi ${cName},\n\nThank you for taking the time to meet today. I wanted to quickly follow up on our discussion and align on the next steps.\n\nPlease let me know your thoughts or when you might be free for a quick chat.\n\nBest regards,\n${sName}`;
+    } else if (promptLower.includes("congrat") || promptLower.includes("congratulations")) {
+      subject = "Congratulations!";
+      body = `Hi ${cName},\n\nWanted to send my warmest congratulations on your exciting news! Wishing you all the continued success.\n\nWarm regards,\n${sName}`;
     } else if (promptLower.includes("contract") || promptLower.includes("proposal")) {
       subject = `Follow up: Contract & Proposal Discussion${companyMention}`;
-    } else if (promptLower.includes("schedule") || promptLower.includes("call")) {
-      subject = `Quick sync on our upcoming roadmap`;
+      body = `Hi ${cName},\n\nI hope you're having a productive week${companyMention ? ` at ${cCompany}` : ""}.\n\nI'm following up on our proposal and contract terms we discussed.\n\nPlease let me know if you have any questions or if you'd like to make adjustments.\n\nBest regards,\n${sName}`;
+    } else if (promptLower.includes("schedule") || promptLower.includes("call") || promptLower.includes("sync")) {
+      subject = "Quick sync: Schedule a call";
+      body = `Hi ${cName},\n\nHope all is well. I'd love to schedule a brief call this week to catch up and align on our next steps.\n\nLet me know what time works best for you.\n\nBest regards,\n${sName}`;
+    } else if (promptLower.includes("thank")) {
+      subject = "Thank you - Follow up regarding our discussion";
+      body = `Hi ${cName},\n\nThank you for your time and for connecting with me${companyMention ? ` at ${cCompany}` : ""}. I really appreciate our conversation and look forward to continuing our collaboration.\n\nPlease let me know if there is anything else I can provide on my end.\n\nBest regards,\n${sName}`;
     } else {
       let cleanPrompt = trimmedPrompt.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
       if (cleanPrompt.length > 40) cleanPrompt = cleanPrompt.substring(0, 40).trim() + "...";
       subject = `Follow-up: ${cleanPrompt}`;
+      body = `Hi ${cName},\n\nI hope this email finds you well${companyMention ? ` at ${cCompany}` : ""}.\n\nI wanted to reach out regarding ${trimmedPrompt}. I believe this is a great opportunity to collaborate and ensure everything is aligned smoothly.\n\nPlease let me know your availability for a brief conversation this week, or feel free to share your thoughts over email.\n\nBest regards,\n${sName}`;
     }
-
-    const body = `${greeting}\n\nI hope you're having a productive week${companyMention ? ` at ${cCompany}` : ""}.\n\nI wanted to follow up regarding: ${trimmedPrompt}.\n\nPlease let me know your thoughts or when you might have a few minutes for a brief call to align on the next steps.\n\nLooking forward to speaking with you.\n\nBest regards,\nSmart Contact Manager Team`;
 
     res.setHeader("Cache-Control", "no-store");
     return res.status(200).json({ subject, body });

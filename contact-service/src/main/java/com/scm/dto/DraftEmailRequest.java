@@ -4,6 +4,7 @@ public class DraftEmailRequest {
     private String contactName;
     private String company;
     private String prompt;
+    private String senderName;
 
     public DraftEmailRequest() {}
 
@@ -11,6 +12,13 @@ public class DraftEmailRequest {
         this.contactName = contactName;
         this.company = company;
         this.prompt = prompt;
+    }
+
+    public DraftEmailRequest(String contactName, String company, String prompt, String senderName) {
+        this.contactName = contactName;
+        this.company = company;
+        this.prompt = prompt;
+        this.senderName = senderName;
     }
 
     public String getContactName() {
@@ -35,5 +43,13 @@ public class DraftEmailRequest {
 
     public void setPrompt(String prompt) {
         this.prompt = prompt;
+    }
+
+    public String getSenderName() {
+        return senderName;
+    }
+
+    public void setSenderName(String senderName) {
+        this.senderName = senderName;
     }
 }
