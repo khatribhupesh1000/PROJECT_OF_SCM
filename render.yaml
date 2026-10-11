@@ -1,13 +1,12 @@
 # ============================================================================
-# Render Cloud Blueprint (render.yaml) - Smart Contact Manager Microservices
+# Render Cloud Blueprint (render.yaml) - Smart Contact Manager (SCM)
 # ============================================================================
 services:
   - type: web
-    name: scm-api-gateway
+    name: smart-contact-manager
     runtime: node
-    rootDir: api-gateway
-    buildCommand: npm install
-    startCommand: node src/server.js
+    buildCommand: npm install && cd frontend-react && npm install && npm run build && cd ..
+    startCommand: node api-gateway/src/server.js
     healthCheckPath: /v1/health
     envVars:
       - key: NODE_ENV
@@ -16,12 +15,6 @@ services:
         value: 8080
       - key: JWT_SECRET
         generateValue: true
-      - key: CORS_ALLOWED_ORIGINS
-        value: https://scm-frontend-react.onrender.com,http://localhost:3000
-      - key: RATE_LIMIT_MAX_REQUESTS
-        value: 100
-      - key: OUTBOUND_TIMEOUT_MS
-        value: 3000
       - key: DB_HOST
         value: auth-contact-api-gateway-khatribhupesh1000-2e27.f.aivencloud.com
       - key: DB_PORT
@@ -36,59 +29,7 @@ services:
         value: REQUIRED
       - key: MONGODB_URI
         sync: false
-
-  - type: web
-    name: scm-contact-service
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    healthCheckPath: /v1/health
-    envVars:
-      - key: SERVICE_MODULE
-        value: contact-service
-      - key: SERVER_PORT
-        value: 8082
-      - key: DB_URL
-        value: jdbc:mysql://auth-contact-api-gateway-khatribhupesh1000-2e27.f.aivencloud.com:14049/defaultdb?sslMode=REQUIRED&useSSL=true&requireSSL=true&serverTimezone=UTC
-      - key: DB_USERNAME
-        value: avnadmin
-      - key: DB_PASSWORD
+      - key: MAIL_USERNAME
         sync: false
-      - key: JWT_SECRET
-        fromService:
-          type: web
-          name: scm-api-gateway
-          envVarKey: JWT_SECRET
-
-  - type: web
-    name: scm-auth-service
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    healthCheckPath: /v1/health
-    envVars:
-      - key: SERVICE_MODULE
-        value: auth-service
-      - key: SERVER_PORT
-        value: 8081
-      - key: DB_URL
-        value: jdbc:mysql://auth-contact-api-gateway-khatribhupesh1000-2e27.f.aivencloud.com:14049/defaultdb?sslMode=REQUIRED&useSSL=true&requireSSL=true&serverTimezone=UTC
-      - key: DB_USERNAME
-        value: avnadmin
-      - key: DB_PASSWORD
+      - key: MAIL_PASSWORD
         sync: false
-      - key: JWT_SECRET
-        fromService:
-          type: web
-          name: scm-api-gateway
-          envVarKey: JWT_SECRET
-
-  - type: web
-    name: scm-frontend-react
-    runtime: static
-    rootDir: frontend-react
-    buildCommand: npm install && npm run build
-    staticPublishPath: ./dist
-    envVars:
-      - key: VITE_API_BASE_URL
-        value: https://scm-api-gateway.onrender.com
