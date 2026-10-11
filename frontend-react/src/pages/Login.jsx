@@ -154,15 +154,16 @@ export default function Login({ onAuthSuccess, onNotify }) {
     }
   };
 
-  const handleGoogleLogin = (intent = "login") => {
+  const handleGoogleLogin = () => {
+    setLoading(true);
     const GOOGLE_CLIENT_ID = "";
     const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
     const SCOPE = encodeURIComponent("openid profile email");
     
     // prompt=select_account forces Google to show all accounts on the device
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent }))}`;
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "login" }))}`;
     
-    window.location.href = googleAuthUrl;
+    window.location.assign(googleAuthUrl);
   };
 
   const handleGithubLogin = async () => {
@@ -258,7 +259,7 @@ export default function Login({ onAuthSuccess, onNotify }) {
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={handleGoogleLogin}
+            onClick={() => handleGoogleLogin()}
             disabled={loading}
             className="py-1.5 px-3 rounded-md text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center justify-center gap-1.5 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
           >
