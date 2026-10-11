@@ -24,6 +24,13 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+if (typeof process.loadEnvFile === "function") {
+  const rootEnv = path.resolve(__dirname, "../../.env");
+  if (fs.existsSync(rootEnv)) {
+    try { process.loadEnvFile(rootEnv); } catch (_e) {}
+  }
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || "ScmEnterpriseHmacSha256SuperSecretSigningKeyForJwtTokens2026!@#";
 const OUTBOUND_TIMEOUT_MS = Number(process.env.OUTBOUND_TIMEOUT_MS || 3000);
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 100);
@@ -925,6 +932,29 @@ const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:300
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "Ov23liScmGithubOAuthClientId";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "scm_github_oauth_secret";
 const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI || "http://localhost:3000/login";
+
+function isGoogleOAuthConfigured() {
+  const id = String(GOOGLE_CLIENT_ID || "").trim();
+  const secret = String(GOOGLE_CLIENT_SECRET || "").trim();
+  return (
+    id.length > 0 &&
+    !id.includes("placeholder") &&
+    !id.includes("scm_google") &&
+    !id.startsWith("1070432793764-a07covnfk3rmpd1bll4d92f88e1umolq") &&
+    secret.length > 0 &&
+    !secret.includes("placeholder") &&
+    !secret.includes("scm_google")
+  );
+}
+
+app.get("/v1/auth/oauth2/google/config", (req, res) => {
+  const isLive = isGoogleOAuthConfigured();
+  return res.json({
+    isLive,
+    clientId: isLive ? GOOGLE_CLIENT_ID : null
+  });
+});
+
 
 function isGithubOAuthConfigured() {
   const id = String(GITHUB_CLIENT_ID || "").trim();

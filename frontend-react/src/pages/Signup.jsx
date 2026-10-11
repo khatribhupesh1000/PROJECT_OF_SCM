@@ -2,11 +2,13 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { COUNTRY_DIAL_CODES } from "../components/ContactModal.jsx";
 import GithubAuthModal from "../components/GithubAuthModal.jsx";
+import GoogleAuthModal from "../components/GoogleAuthModal.jsx";
 import { authApi, parseRfc7807Error } from "../services/api.js";
 
 export default function Signup({ onNotify }) {
   const navigate = useNavigate();
   const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [countryCode, setCountryCode] = useState("+91");
   const [form, setForm] = useState({
     name: "",
@@ -50,9 +52,20 @@ export default function Signup({ onNotify }) {
     }
   };
 
-  const handleGoogleSignup = () => {
+  const handleGoogleSignup = async () => {
     setLoading(true);
-    window.location.assign(authApi.getGoogleOAuthUrl("signup"));
+    try {
+      const config = await authApi.getGoogleConfig();
+      if (config?.isLive) {
+        window.location.assign(authApi.getGoogleOAuthUrl("signup"));
+      } else {
+        setGoogleModalOpen(true);
+      }
+    } catch (_e) {
+      setGoogleModalOpen(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGithubSignup = async () => {
@@ -233,6 +246,19 @@ export default function Signup({ onNotify }) {
       <GithubAuthModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
+        intent="signup"
+        initialValue={form.email}
+        onNotify={onNotify}
+        onSwitchIntent={(targetIntent, mail) =>
+          navigate(targetIntent === "signup" ? "/signup" : "/login", {
+            state: { registeredEmail: mail }
+          })
+        }
+      />
+
+      <GoogleAuthModal
+        isOpen={googleModalOpen}
+        onClose={() => setGoogleModalOpen(false)}
         intent="signup"
         initialValue={form.email}
         onNotify={onNotify}

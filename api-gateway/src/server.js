@@ -1,3 +1,13 @@
+import fs from "node:fs";
+import path from "node:path";
+
+if (typeof process.loadEnvFile === "function") {
+  const rootEnv = path.resolve(process.cwd(), ".env");
+  if (fs.existsSync(rootEnv)) {
+    try { process.loadEnvFile(rootEnv); } catch (_e) {}
+  }
+}
+
 import { app } from "./app.js";
 
 const PORT = Number(process.env.GATEWAY_PORT || process.env.PORT || 8080);

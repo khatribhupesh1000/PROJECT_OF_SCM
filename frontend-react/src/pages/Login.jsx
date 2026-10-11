@@ -2,12 +2,14 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import GithubAuthModal from "../components/GithubAuthModal.jsx";
+import GoogleAuthModal from "../components/GoogleAuthModal.jsx";
 import { authApi, parseRfc7807Error } from "../services/api.js";
 
 export default function Login({ onAuthSuccess, onNotify }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [email, setEmail] = useState(() => {
     if (location.state?.registeredEmail) {
       return location.state.registeredEmail;
@@ -98,9 +100,20 @@ export default function Login({ onAuthSuccess, onNotify }) {
     }
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     setLoading(true);
-    window.location.assign(authApi.getGoogleOAuthUrl("login"));
+    try {
+      const config = await authApi.getGoogleConfig();
+      if (config?.isLive) {
+        window.location.assign(authApi.getGoogleOAuthUrl("login"));
+      } else {
+        setGoogleModalOpen(true);
+      }
+    } catch (_e) {
+      setGoogleModalOpen(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGithubLogin = async () => {
@@ -236,6 +249,20 @@ export default function Login({ onAuthSuccess, onNotify }) {
       <GithubAuthModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
+        intent="login"
+        initialValue={email}
+        onAuthSuccess={onAuthSuccess}
+        onNotify={onNotify}
+        onSwitchIntent={(targetIntent, mail) =>
+          navigate(targetIntent === "signup" ? "/signup" : "/login", {
+            state: { registeredEmail: mail }
+          })
+        }
+      />
+
+      <GoogleAuthModal
+        isOpen={googleModalOpen}
+        onClose={() => setGoogleModalOpen(false)}
         intent="login"
         initialValue={email}
         onAuthSuccess={onAuthSuccess}

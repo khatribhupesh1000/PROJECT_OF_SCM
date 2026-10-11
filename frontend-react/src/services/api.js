@@ -541,6 +541,15 @@ export const authApi = {
     return `${API_BASE_URL}/v1/auth/oauth2/google?${params.toString()}`;
   },
 
+  async getGoogleConfig() {
+    try {
+      const response = await api.get("/v1/auth/oauth2/google/config");
+      return response.data;
+    } catch (_e) {
+      return { isLive: false, clientId: null };
+    }
+  },
+
   async getGithubConfig() {
     try {
       const response = await api.get("/v1/auth/oauth2/github/config");
