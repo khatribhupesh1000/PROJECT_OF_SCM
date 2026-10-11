@@ -69,8 +69,8 @@ export function getStoredUser() {
         window.history.replaceState({}, document.title, "/");
         pendingOAuthToast = {
           variant: "success",
-          title: "Signed in",
-          detail: `Authenticated as ${parsedUser.email}`
+          title: "Signed in with Google",
+          detail: `Signed in with Google as ${parsedUser.email}`
         };
         return parsedUser;
       } else if (oauthError) {

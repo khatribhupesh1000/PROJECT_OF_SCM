@@ -2,13 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { COUNTRY_DIAL_CODES } from "../components/ContactModal.jsx";
 import GithubAuthModal from "../components/GithubAuthModal.jsx";
-import GoogleAuthModal from "../components/GoogleAuthModal.jsx";
 import { authApi, parseRfc7807Error } from "../services/api.js";
 
 export default function Signup({ onNotify }) {
   const navigate = useNavigate();
   const [githubModalOpen, setGithubModalOpen] = useState(false);
-  const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [countryCode, setCountryCode] = useState("+91");
   const [form, setForm] = useState({
     name: "",
@@ -25,7 +23,23 @@ export default function Signup({ onNotify }) {
       setGithubModalOpen(true);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, []);
+    const oauthError = params.get("oauth_error");
+    if (oauthError) {
+      const emailParam = params.get("email");
+      if (emailParam) {
+        setForm((prev) => ({ ...prev, email: emailParam }));
+      }
+      onNotify?.({
+        variant: "info",
+        title: "Registration Required",
+        detail:
+          oauthError === "no_account_found"
+            ? "No account found with this Google email. Please register below."
+            : `Google authentication notice: ${oauthError}`
+      });
+      window.history.replaceState({}, document.title, "/signup");
+    }
+  }, [onNotify]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -52,20 +66,12 @@ export default function Signup({ onNotify }) {
     }
   };
 
-  const handleGoogleSignup = async () => {
-    setLoading(true);
-    try {
-      const config = await authApi.getGoogleConfig();
-      if (config?.isLive) {
-        window.location.assign(authApi.getGoogleOAuthUrl("signup"));
-      } else {
-        setGoogleModalOpen(true);
-      }
-    } catch (_e) {
-      setGoogleModalOpen(true);
-    } finally {
-      setLoading(false);
-    }
+  const handleGoogleSignup = () => {
+    const GOOGLE_CLIENT_ID = "";
+    const REDIRECT_URI = encodeURIComponent("http://localhost:8080/v1/auth/oauth2/google/callback");
+    const SCOPE = encodeURIComponent("openid profile email");
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "signup" }))}`;
+    window.location.href = googleAuthUrl;
   };
 
   const handleGithubSignup = async () => {
@@ -246,19 +252,6 @@ export default function Signup({ onNotify }) {
       <GithubAuthModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
-        intent="signup"
-        initialValue={form.email}
-        onNotify={onNotify}
-        onSwitchIntent={(targetIntent, mail) =>
-          navigate(targetIntent === "signup" ? "/signup" : "/login", {
-            state: { registeredEmail: mail }
-          })
-        }
-      />
-
-      <GoogleAuthModal
-        isOpen={googleModalOpen}
-        onClose={() => setGoogleModalOpen(false)}
         intent="signup"
         initialValue={form.email}
         onNotify={onNotify}

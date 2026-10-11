@@ -921,17 +921,31 @@ app.delete("/v1/auth/tokens", (req, res) => {
 
 const GOOGLE_CLIENT_ID =
   process.env.GOOGLE_CLIENT_ID ||
-  "scm_google_oauth_client_id_placeholder";
+  "";
 const GOOGLE_CLIENT_SECRET =
   process.env.GOOGLE_CLIENT_SECRET ||
-  "scm_google_oauth_client_secret_placeholder";
+  "";
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ||
-  "http://localhost:8081/login/oauth2/code/google";
+  "http://localhost:8080/v1/auth/oauth2/google/callback";
 const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:3000";
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "Ov23liScmGithubOAuthClientId";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "scm_github_oauth_secret";
 const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI || "http://localhost:3000/login";
+
+export async function dispatchEmailNotification({ to, subject, body }) {
+  if (!to) return;
+  try {
+    await mailTransporter.sendMail({
+      from: `"Smart Contact Manager Security" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+      to,
+      subject,
+      text: body
+    });
+  } catch (err) {
+    console.warn("[ASYNC_MAIL_WARN]", err.message);
+  }
+}
 
 function isGoogleOAuthConfigured() {
   const id = String(GOOGLE_CLIENT_ID || "").trim();
@@ -940,7 +954,6 @@ function isGoogleOAuthConfigured() {
     id.length > 0 &&
     !id.includes("placeholder") &&
     !id.includes("scm_google") &&
-    !id.startsWith("1070432793764-a07covnfk3rmpd1bll4d92f88e1umolq") &&
     secret.length > 0 &&
     !secret.includes("placeholder") &&
     !secret.includes("scm_google")
@@ -955,7 +968,6 @@ app.get("/v1/auth/oauth2/google/config", (req, res) => {
   });
 });
 
-
 function isGithubOAuthConfigured() {
   const id = String(GITHUB_CLIENT_ID || "").trim();
   const secret = String(GITHUB_CLIENT_SECRET || "").trim();
@@ -969,9 +981,6 @@ function isGithubOAuthConfigured() {
 }
 
 function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, intent = "login", correlationId }) {
-  if (isLiveDbEnabled()) {
-    loadUsersFromMysql(usersStore);
-  }
   const cleanEmail = String(email || "").trim().toLowerCase();
   if (!cleanEmail) {
     throw new HttpProblemError(400, "Bad Request", "Email is required for Google authentication.");
@@ -979,6 +988,10 @@ function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, inten
   const cleanName =
     String(name || "").trim() ||
     cleanEmail.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  if (isLiveDbEnabled()) {
+    try { loadUsersFromMysql(usersStore); } catch (_e) {}
+  }
 
   let user = usersStore.get(cleanEmail);
   const isNewUser = !user;
@@ -1015,38 +1028,23 @@ function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, inten
     };
   }
 
+  // Update memory store immediately (< 1ms)
   usersStore.set(cleanEmail, user);
-  saveUserToMysql(user);
 
-  // Async Welcome Email via configured Gmail SMTP upon Google signup
-  if (isNewUser || intent === "signup") {
+  // Fire-and-forget: Never block HTTP response on Gmail SMTP delivery or database sync
+  setImmediate(() => {
     try {
-      notificationsStore.push({
-        id: `ntf-${crypto.randomUUID().slice(0, 8)}`,
-        to: user.email,
-        type: "WELCOME",
-        subject: "Welcome to Smart Contact Manager (Google Account)",
-        status: "DELIVERED",
-        dispatchedAt: new Date().toISOString()
-      });
-      dispatchRealSmtpEmailAsync(
-        user.email,
-        "Welcome to Smart Contact Manager",
-        `Hello ${user.name},\n\nWelcome to Smart Contact Manager! Your Google account (${user.email}) has been registered.\n\nBest regards,\nSmart Contact Manager`
-      );
-    } catch (_mailErr) {
-      // Never block authentication or signup
+      saveUserToMysql(user);
+    } catch (dbErr) {
+      console.warn("[ASYNC_DB_WARN]", dbErr.message);
     }
-  }
 
-  // Security Alert on successful Google Login
-  if (intent !== "signup") {
-    sendSecurityAlertEmail({
-      user,
-      provider: "Google OAuth 2.0",
-      correlationId
-    });
-  }
+    dispatchEmailNotification({
+      to: user.email,
+      subject: intent === "signup" ? "Welcome to Smart Contact Manager" : "Security Alert: New Sign-In",
+      body: `Successful ${intent} via Google OAuth.`
+    }).catch((err) => console.warn("[ASYNC_MAIL_WARN]", err.message));
+  });
 
   const accessToken = signJwtHmacSha256({
     sub: user.email,
@@ -1084,7 +1082,7 @@ app.get(["/v1/auth/oauth2/google", "/oauth2/authorization/google"], (req, res) =
     scope: "openid profile email",
     prompt: "select_account",
     access_type: "offline",
-    state: intent
+    state: JSON.stringify({ intent })
   });
   const redirectUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   res.setHeader("Location", redirectUrl);
@@ -1093,14 +1091,30 @@ app.get(["/v1/auth/oauth2/google", "/oauth2/authorization/google"], (req, res) =
 
 app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async (req, res) => {
   const { code, state, error } = req.query || {};
-  const intent = state === "signup" ? "signup" : "login";
+  let intent = "login";
+  try {
+    if (state) {
+      if (typeof state === "string" && state.startsWith("{")) {
+        const parsedState = JSON.parse(state);
+        intent = parsedState.intent === "signup" ? "signup" : "login";
+      } else {
+        intent = state === "signup" ? "signup" : "login";
+      }
+    }
+  } catch (_e) {
+    intent = state === "signup" ? "signup" : "login";
+  }
+
   if (error || !code) {
+    const targetPage = intent === "signup" ? "signup" : "login";
     return res.redirect(
-      `${FRONTEND_BASE_URL}/${intent}?oauth_error=${encodeURIComponent(error || "missing_authorization_code")}`
+      `${FRONTEND_BASE_URL}/${targetPage}?oauth_error=${encodeURIComponent(error || "missing_authorization_code")}`
     );
   }
 
   try {
+    const redirectUriToUse = GOOGLE_REDIRECT_URI;
+
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -1108,27 +1122,48 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
         code: String(code),
         client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: GOOGLE_REDIRECT_URI,
+        redirect_uri: redirectUriToUse,
         grant_type: "authorization_code"
       }).toString()
     });
 
-    const tokenData = await tokenRes.json();
+    let tokenData = await tokenRes.json();
     if (!tokenRes.ok || !tokenData.access_token) {
-      throw new Error(tokenData.error_description || tokenData.error || "Google token exchange failed");
+      if (tokenData.error === "redirect_uri_mismatch") {
+        const altUri = redirectUriToUse.includes(":8080")
+          ? "http://localhost:8081/login/oauth2/code/google"
+          : "http://localhost:8080/v1/auth/oauth2/google/callback";
+        const retryRes = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code: String(code),
+            client_id: GOOGLE_CLIENT_ID,
+            client_secret: GOOGLE_CLIENT_SECRET,
+            redirect_uri: altUri,
+            grant_type: "authorization_code"
+          }).toString()
+        });
+        const retryData = await retryRes.json();
+        if (retryRes.ok && retryData.access_token) {
+          tokenData = retryData;
+        } else {
+          throw new Error(tokenData.error_description || tokenData.error || "Google token exchange failed");
+        }
+      } else {
+        throw new Error(tokenData.error_description || tokenData.error || "Google token exchange failed");
+      }
     }
 
     let profile = {};
     try {
-      const userInfoRes = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${tokenData.access_token}` }
       });
       if (userInfoRes.ok) {
         profile = await userInfoRes.json();
       }
-    } catch (_e) {
-      // Fallback to decoding id_token
-    }
+    } catch (_e) {}
 
     if (!profile.email && tokenData.id_token) {
       try {
@@ -1139,30 +1174,56 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
       } catch (_e) {}
     }
 
+    if (!profile.email) {
+      throw new Error("Unable to retrieve email from Google profile");
+    }
+
+    const cleanEmail = String(profile.email).trim().toLowerCase();
+    const cleanName = profile.name || cleanEmail.split("@")[0];
+
+    if (isLiveDbEnabled()) {
+      try { loadUsersFromMysql(usersStore); } catch (_e) {}
+    }
+    const existingUser = usersStore.get(cleanEmail);
+
+    if (intent === "login") {
+      if (!existingUser) {
+        return res.redirect(
+          `${FRONTEND_BASE_URL}/signup?oauth_error=no_account_found&email=${encodeURIComponent(cleanEmail)}`
+        );
+      }
+
+      const envelope = provisionGoogleUserAndNotify({
+        email: cleanEmail,
+        name: cleanName,
+        googleId: profile.sub,
+        pictureUrl: profile.picture,
+        intent: "login",
+        correlationId: req.correlationId
+      });
+
+      const redirectParams = new URLSearchParams({
+        oauth_token: envelope.accessToken,
+        oauth_user: JSON.stringify(envelope.user)
+      });
+      return res.redirect(`${FRONTEND_BASE_URL}/login?${redirectParams.toString()}`);
+    }
+
+    // Intent is signup: Save user in MySQL with provider GOOGLE
     const envelope = provisionGoogleUserAndNotify({
-      email: profile.email,
-      name: profile.name,
+      email: cleanEmail,
+      name: cleanName,
       googleId: profile.sub,
       pictureUrl: profile.picture,
-      intent,
+      intent: "signup",
       correlationId: req.correlationId
     });
 
-    // Requirement 1.2: After Sign Up, DO NOT drop into dashboard; redirect to /login with registration message
-    if (intent === "signup") {
-      const signupParams = new URLSearchParams({
-        signup_success: "1",
-        email: envelope.user.email
-      });
-      return res.redirect(`${FRONTEND_BASE_URL}/login?${signupParams.toString()}`);
-    }
-
-    const redirectParams = new URLSearchParams({
-      oauth_token: envelope.accessToken,
-      oauth_user: JSON.stringify(envelope.user),
-      intent: "login"
+    const signupParams = new URLSearchParams({
+      signup_success: "1",
+      email: envelope.user.email
     });
-    return res.redirect(`${FRONTEND_BASE_URL}/login?${redirectParams.toString()}`);
+    return res.redirect(`${FRONTEND_BASE_URL}/login?${signupParams.toString()}`);
   } catch (err) {
     const targetPage = intent === "signup" ? "signup" : "login";
     return res.redirect(

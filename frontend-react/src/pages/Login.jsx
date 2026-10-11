@@ -2,14 +2,12 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import GithubAuthModal from "../components/GithubAuthModal.jsx";
-import GoogleAuthModal from "../components/GoogleAuthModal.jsx";
-import { authApi, parseRfc7807Error } from "../services/api.js";
+import { authApi, setAuthToken, parseRfc7807Error } from "../services/api.js";
 
 export default function Login({ onAuthSuccess, onNotify }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [githubModalOpen, setGithubModalOpen] = useState(false);
-  const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [email, setEmail] = useState(() => {
     if (location.state?.registeredEmail) {
       return location.state.registeredEmail;
@@ -31,6 +29,62 @@ export default function Login({ onAuthSuccess, onNotify }) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
+
+  // Handle Google OAuth landing (?oauth_token=... or ?signup_success=1 or ?oauth_error=...)
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.location?.search) return;
+    const params = new URLSearchParams(window.location.search);
+    const oauthToken = params.get("oauth_token");
+    const oauthUserRaw = params.get("oauth_user");
+    const signupSuccess = params.get("signup_success");
+    const oauthError = params.get("oauth_error");
+
+    if (oauthToken) {
+      let parsedUser = null;
+      try {
+        if (oauthUserRaw) parsedUser = JSON.parse(oauthUserRaw);
+      } catch (_e) {}
+      setAuthToken(oauthToken, parsedUser);
+      if (parsedUser) {
+        onAuthSuccess(parsedUser);
+        onNotify({
+          variant: "success",
+          title: "Signed in with Google",
+          detail: `Signed in with Google as ${parsedUser.email}`
+        });
+      }
+      window.history.replaceState({}, document.title, "/");
+      navigate("/");
+      return;
+    }
+
+    if (signupSuccess === "1") {
+      const emailParam = params.get("email");
+      if (emailParam) {
+        setEmail(emailParam);
+      }
+      onNotify({
+        variant: "success",
+        title: "Account registered",
+        detail: "Account registered successfully! Please sign in with your email and password."
+      });
+      window.history.replaceState({}, document.title, "/login");
+      return;
+    }
+
+    if (oauthError) {
+      const detail =
+        oauthError === "no_account_found"
+          ? "No account found with this Google email. Please sign up first."
+          : `Google authentication failed: ${oauthError}`;
+      onNotify({
+        variant: "error",
+        title: "Authentication Failed",
+        detail
+      });
+      window.history.replaceState({}, document.title, "/login");
+    }
+  }, [navigate, onAuthSuccess, onNotify]);
 
   // Handle GitHub OAuth 2.0 callback (?code=...) on http://localhost:3000/login
   useEffect(() => {
@@ -79,7 +133,7 @@ export default function Login({ onAuthSuccess, onNotify }) {
       .finally(() => {
         setLoading(false);
       });
-  }, []);
+  }, [navigate, onAuthSuccess, onNotify]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -100,20 +154,15 @@ export default function Login({ onAuthSuccess, onNotify }) {
     }
   };
 
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    try {
-      const config = await authApi.getGoogleConfig();
-      if (config?.isLive) {
-        window.location.assign(authApi.getGoogleOAuthUrl("login"));
-      } else {
-        setGoogleModalOpen(true);
-      }
-    } catch (_e) {
-      setGoogleModalOpen(true);
-    } finally {
-      setLoading(false);
-    }
+  const handleGoogleLogin = (intent = "login") => {
+    const GOOGLE_CLIENT_ID = "";
+    const REDIRECT_URI = encodeURIComponent("http://localhost:8080/v1/auth/oauth2/google/callback");
+    const SCOPE = encodeURIComponent("openid profile email");
+    
+    // prompt=select_account forces Google to show all accounts on the device
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent }))}`;
+    
+    window.location.href = googleAuthUrl;
   };
 
   const handleGithubLogin = async () => {
@@ -249,20 +298,6 @@ export default function Login({ onAuthSuccess, onNotify }) {
       <GithubAuthModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
-        intent="login"
-        initialValue={email}
-        onAuthSuccess={onAuthSuccess}
-        onNotify={onNotify}
-        onSwitchIntent={(targetIntent, mail) =>
-          navigate(targetIntent === "signup" ? "/signup" : "/login", {
-            state: { registeredEmail: mail }
-          })
-        }
-      />
-
-      <GoogleAuthModal
-        isOpen={googleModalOpen}
-        onClose={() => setGoogleModalOpen(false)}
         intent="login"
         initialValue={email}
         onAuthSuccess={onAuthSuccess}
