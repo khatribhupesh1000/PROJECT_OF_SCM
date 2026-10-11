@@ -14,6 +14,12 @@ spring:
       ddl-auto: update
     show-sql: true
     open-in-view: false
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:scm-resilient-placeholder-key}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4o-mini}
 
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}

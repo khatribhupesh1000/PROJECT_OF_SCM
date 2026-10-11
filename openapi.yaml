@@ -33,6 +33,8 @@ tags:
     description: Legacy WSDL inspection, SOAP 1.1 outbound client, and 3-state Circuit Breaker
   - name: GraphQL
     description: Flexible GraphQL query & schema introspection endpoint alongside REST
+  - name: AI
+    description: Spring AI productivity endpoints for structured contact parsing and context-aware email drafting
 
 components:
   securitySchemes:
@@ -513,3 +515,51 @@ paths:
       responses:
         '200':
           description: GraphQL execution result
+
+  /v1/ai/parse-contact:
+    post:
+      tags: [AI]
+      summary: Smart Contact Auto-Fill (Extract structured contact DTO from unstructured text)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rawText]
+              properties:
+                rawText:
+                  type: string
+                  example: "Met Rahul Sharma, VP at FinTech Labs, call him at +91 9812345678, email rahul@fintech.io, located in New Delhi"
+      responses:
+        '200':
+          description: Structured contact attributes extracted by Spring AI / Resilient Parser
+        '400':
+          description: Missing or empty rawText payload
+
+  /v1/ai/draft-email:
+    post:
+      tags: [AI]
+      summary: Draft with AI (Generate context-aware email subject and body for contact)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                contactName:
+                  type: string
+                  example: "Rahul Sharma"
+                company:
+                  type: string
+                  example: "FinTech Labs"
+                prompt:
+                  type: string
+                  example: "Follow up on yesterday's contract proposal"
+      responses:
+        '200':
+          description: AI-generated email subject and professional body
+        '400':
+          description: Missing or empty prompt payload

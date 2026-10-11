@@ -36,10 +36,29 @@
         <jjwt.version>0.12.5</jjwt.version>
         <jackson-xml.version>2.21.5</jackson-xml.version>
         <springdoc.version>2.6.0</springdoc.version>
+        <spring-ai.version>1.0.0-M1</spring-ai.version>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>spring-milestones</id>
+            <name>Spring Milestones</name>
+            <url>https://repo.spring.io/milestone</url>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.springframework.ai</groupId>
+                <artifactId>spring-ai-bom</artifactId>
+                <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
             <dependency>
                 <groupId>com.scm</groupId>
                 <artifactId>common-lib</artifactId>

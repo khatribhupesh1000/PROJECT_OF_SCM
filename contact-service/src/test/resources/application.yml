@@ -10,3 +10,9 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: false
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:scm-resilient-placeholder-key}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:gpt-4o-mini}

@@ -609,3 +609,19 @@ export const notificationApi = {
     return response.data;
   }
 };
+
+export const aiApi = {
+  async parseContact(rawText) {
+    const response = await api.post("/v1/ai/parse-contact", { rawText });
+    return response.data;
+  },
+
+  async draftEmail({ contactName, company, prompt }) {
+    const response = await api.post("/v1/ai/draft-email", {
+      contactName,
+      company,
+      prompt
+    });
+    return response.data;
+  }
+};

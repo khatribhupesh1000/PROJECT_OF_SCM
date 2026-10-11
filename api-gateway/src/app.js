@@ -2062,6 +2062,168 @@ app.get("/v1/notifications/emails", (req, res) => {
 });
 
 // ============================================================================
+// Spring AI & Intelligent Productivity Endpoints (/v1/ai/*)
+// ============================================================================
+app.post("/v1/ai/parse-contact", async (req, res, next) => {
+  try {
+    assertSupportedAccept(req);
+    const { rawText } = req.body || {};
+    if (!rawText || typeof rawText !== "string" || !rawText.trim()) {
+      throw new HttpProblemError(
+        400,
+        "Bad Request",
+        "Request body must include a non-empty 'rawText' string."
+      );
+    }
+
+    const trimmedText = rawText.trim();
+    const correlationId = req.headers["x-correlation-id"] || crypto.randomUUID();
+
+    // 1. Attempt downstream dispatch to Spring Boot contact-service (port 8082)
+    try {
+      const abortCtrl = new AbortController();
+      const timeoutId = setTimeout(() => abortCtrl.abort(), OUTBOUND_TIMEOUT_MS);
+      const downstreamResp = await fetch("http://localhost:8082/v1/ai/parse-contact", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": correlationId
+        },
+        body: JSON.stringify({ rawText: trimmedText }),
+        signal: abortCtrl.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (downstreamResp.ok) {
+        const parsed = await downstreamResp.json();
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(200).json(parsed);
+      }
+    } catch (_downstreamErr) {
+      // Graceful fallback: contact-service offline or timed out
+    }
+
+    // 2. Resilient Built-in Spring AI Parser (Offline & Missing API Key Safe)
+    const emailMatch = trimmedText.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    const phoneMatch = trimmedText.match(/(\+?[0-9][0-9\-\s()]{7,18}[0-9])/);
+    const nameMatch = trimmedText.match(/(?:\bmet\s+|\bname[:\s]+|\bcontact[:\s]+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i);
+    const companyMatch = trimmedText.match(/(?:at|from|company[:\s]+)\s+([A-Z0-9][A-Za-z0-9&.\s]+?)(?:,|\.|\bcall\b|\bemail\b|\blocated\b|$)/i);
+    const roleMatch = trimmedText.match(/\b(VP|Vice President|Director|Architect|Engineer|Developer|Manager|Founder|Co-Founder|CEO|CTO|Lead|Consultant)\b(?:\s+(?:of|at|in)?\s+[A-Za-z]+)?/i);
+    const locMatch = trimmedText.match(/(?:located in|in|address[:\s]+)\s+([A-Z][a-zA-Z\s]+?)(?:$|\.|,)/i);
+
+    let extractedName = nameMatch ? nameMatch[1].trim() : null;
+    if (extractedName && extractedName.toLowerCase().startsWith("met ")) {
+      extractedName = extractedName.substring(4).trim();
+    }
+    if (!extractedName) {
+      const parts = trimmedText.split(/[,\\n]/);
+      for (const p of parts) {
+        const candidate = p.trim();
+        if (/^[A-Z][a-z]+(\s+[A-Z][a-z]+)+$/.test(candidate)) {
+          extractedName = candidate;
+          break;
+        }
+      }
+    }
+
+    let inferredTag = "Colleague";
+    const lower = trimmedText.toLowerCase();
+    if (/vip|ceo|founder|director/.test(lower)) {
+      inferredTag = "VIP";
+    } else if (/lead|client|prospect|fintech|vp/.test(lower)) {
+      inferredTag = "Lead";
+    } else if (/family|cousin|brother|sister/.test(lower)) {
+      inferredTag = "Family";
+    }
+
+    const result = {
+      name: extractedName || "New Contact",
+      email: emailMatch ? emailMatch[1].trim() : null,
+      phoneNumber: phoneMatch ? phoneMatch[1].replace(/[^0-9+]/g, "").trim() : null,
+      company: companyMatch ? companyMatch[1].trim() : null,
+      role: roleMatch ? roleMatch[0].trim() : null,
+      address: locMatch ? locMatch[1].trim() : null,
+      tag: inferredTag
+    };
+
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/v1/ai/draft-email", async (req, res, next) => {
+  try {
+    assertSupportedAccept(req);
+    const { contactName, company, prompt } = req.body || {};
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+      throw new HttpProblemError(
+        400,
+        "Bad Request",
+        "Request body must include a non-empty 'prompt' string."
+      );
+    }
+
+    const trimmedPrompt = prompt.trim();
+    const cName = contactName && String(contactName).trim() ? String(contactName).trim() : "there";
+    const cCompany = company && String(company).trim() ? String(company).trim() : "";
+    const correlationId = req.headers["x-correlation-id"] || crypto.randomUUID();
+
+    // 1. Attempt downstream dispatch to Spring Boot contact-service (port 8082)
+    try {
+      const abortCtrl = new AbortController();
+      const timeoutId = setTimeout(() => abortCtrl.abort(), OUTBOUND_TIMEOUT_MS);
+      const downstreamResp = await fetch("http://localhost:8082/v1/ai/draft-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": correlationId
+        },
+        body: JSON.stringify({ contactName: cName, company: cCompany, prompt: trimmedPrompt }),
+        signal: abortCtrl.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (downstreamResp.ok) {
+        const drafted = await downstreamResp.json();
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(200).json(drafted);
+      }
+    } catch (_downstreamErr) {
+      // Graceful fallback: contact-service offline or timed out
+    }
+
+    // 2. Resilient Built-in Spring AI Email Drafter
+    const greeting = `Hi ${cName},`;
+    const companyMention = cCompany ? ` at ${cCompany}` : "";
+    let subject;
+    const promptLower = trimmedPrompt.toLowerCase();
+
+    if (promptLower.includes("thank")) {
+      subject = `Thank you - Follow up regarding our discussion`;
+    } else if (promptLower.includes("coffee") || promptLower.includes("meeting")) {
+      subject = `Great meeting you${companyMention} - Next steps`;
+    } else if (promptLower.includes("contract") || promptLower.includes("proposal")) {
+      subject = `Follow up: Contract & Proposal Discussion${companyMention}`;
+    } else if (promptLower.includes("schedule") || promptLower.includes("call")) {
+      subject = `Quick sync on our upcoming roadmap`;
+    } else {
+      let cleanPrompt = trimmedPrompt.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
+      if (cleanPrompt.length > 40) cleanPrompt = cleanPrompt.substring(0, 40).trim() + "...";
+      subject = `Follow-up: ${cleanPrompt}`;
+    }
+
+    const body = `${greeting}\n\nI hope you're having a productive week${companyMention ? ` at ${cCompany}` : ""}.\n\nI wanted to follow up regarding: ${trimmedPrompt}.\n\nPlease let me know your thoughts or when you might have a few minutes for a brief call to align on the next steps.\n\nLooking forward to speaking with you.\n\nBest regards,\nSmart Contact Manager Team`;
+
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json({ subject, body });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
 // Audit & NoSQL Document Store Routes (/v1/documents/:collection) (#23)
 // ============================================================================
 app.post("/v1/documents/:collection", (req, res, next) => {

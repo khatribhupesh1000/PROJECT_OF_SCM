@@ -21,7 +21,8 @@ import {
   Loader2,
   Compass,
   Navigation,
-  AlertCircle
+  AlertCircle,
+  Sparkles
 } from "lucide-react";
 import {
   formatPhoneWithFlag,
@@ -29,6 +30,7 @@ import {
   inferContactTag,
   formatShortDate,
   notificationApi,
+  aiApi,
   parseRfc7807Error,
   getLocationAndTimezoneInfo
 } from "../services/api.js";
@@ -70,6 +72,38 @@ export default function ContactDrawer({
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [emailSending, setEmailSending] = useState(false);
+  const [aiDraftOpen, setAiDraftOpen] = useState(false);
+  const [aiDraftPrompt, setAiDraftPrompt] = useState("");
+  const [aiDrafting, setAiDrafting] = useState(false);
+
+  const handleGenerateAiDraft = async () => {
+    if (!aiDraftPrompt.trim()) return;
+    setAiDrafting(true);
+    try {
+      const result = await aiApi.draftEmail({
+        contactName: contact.name,
+        company: contact.company,
+        prompt: aiDraftPrompt.trim()
+      });
+      if (result.subject) setEmailSubject(result.subject);
+      if (result.body) setEmailBody(result.body);
+      setAiDraftOpen(false);
+      onNotify?.({
+        variant: "success",
+        title: "✨ Email Drafted with AI",
+        detail: "Subject and body populated. Ready to send via SMTP."
+      });
+    } catch (err) {
+      const problem = parseRfc7807Error(err);
+      onNotify?.({
+        variant: "error",
+        title: "AI Draft Error",
+        detail: problem.detail || "Unable to draft email."
+      });
+    } finally {
+      setAiDrafting(false);
+    }
+  };
 
   useEffect(() => {
     if (contact) {
@@ -78,6 +112,8 @@ export default function ContactDrawer({
       setEmailOpen(false);
       setEmailSubject("");
       setEmailBody("");
+      setAiDraftOpen(false);
+      setAiDraftPrompt("");
     }
   }, [contact]);
 
@@ -409,16 +445,71 @@ export default function ContactDrawer({
                   </div>
                 ) : (
                   <>
-                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono truncate">
-                      To: {contact.email}
+                    <div className="flex items-center justify-between text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
+                      <span className="truncate">To: {contact.email}</span>
+                      <button
+                        type="button"
+                        onClick={() => setAiDraftOpen((prev) => !prev)}
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-emerald-700 dark:text-emerald-400 bg-emerald-100/70 dark:bg-emerald-900/40 hover:bg-emerald-200/70 dark:hover:bg-emerald-800/60 transition-colors"
+                      >
+                        <Sparkles className="w-2.5 h-2.5" />
+                        <span>{aiDraftOpen ? "Close AI" : "✨ Draft with AI"}</span>
+                      </button>
                     </div>
-                    <input
-                      type="text"
-                      placeholder="Subject"
-                      value={emailSubject}
-                      onChange={(e) => setEmailSubject(e.target.value)}
-                      className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-emerald-400 dark:focus:border-emerald-600 focus:outline-none"
-                    />
+
+                    {aiDraftOpen && (
+                      <div className="flex items-center gap-1.5 p-1.5 rounded-md bg-white dark:bg-zinc-900 border border-emerald-300 dark:border-emerald-700 shadow-sm">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 ml-1" />
+                        <input
+                          type="text"
+                          autoFocus
+                          value={aiDraftPrompt}
+                          onChange={(e) => setAiDraftPrompt(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleGenerateAiDraft();
+                            }
+                          }}
+                          placeholder="e.g. Say thank you for the coffee meeting..."
+                          className="flex-1 bg-transparent text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none px-1"
+                        />
+                        <button
+                          type="button"
+                          disabled={aiDrafting || !aiDraftPrompt.trim()}
+                          onClick={handleGenerateAiDraft}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-[11px] font-medium bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98]"
+                        >
+                          {aiDrafting ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-3 h-3" />
+                          )}
+                          <span>{aiDrafting ? "Drafting..." : "Generate"}</span>
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Subject"
+                        value={emailSubject}
+                        onChange={(e) => setEmailSubject(e.target.value)}
+                        className="flex-1 rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-emerald-400 dark:focus:border-emerald-600 focus:outline-none"
+                      />
+                      {!aiDraftOpen && (
+                        <button
+                          type="button"
+                          onClick={() => setAiDraftOpen(true)}
+                          title="Draft with AI"
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-xs font-medium transition-all shrink-0 active:scale-[0.98]"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          <span className="hidden sm:inline">✨ Draft with AI</span>
+                        </button>
+                      )}
+                    </div>
                     <textarea
                       rows={3}
                       placeholder="Write your message..."

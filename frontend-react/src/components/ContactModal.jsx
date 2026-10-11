@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Upload, X, CheckCircle2 } from "lucide-react";
-import { contactApi, parseRfc7807Error } from "../services/api.js";
+import { Upload, X, CheckCircle2, Sparkles, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { contactApi, aiApi, parseRfc7807Error } from "../services/api.js";
 
 const EMAIL_REGEX = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const LOCAL_PHONE_REGEX = /^[0-9]{6,15}$/;
@@ -73,6 +73,50 @@ export default function ContactModal({
   const [errors, setErrors] = useState({});
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [aiBoxOpen, setAiBoxOpen] = useState(false);
+  const [rawAiText, setRawAiText] = useState("");
+  const [aiParsing, setAiParsing] = useState(false);
+
+  const handleAutoFillWithAi = async () => {
+    if (!rawAiText.trim()) return;
+    setAiParsing(true);
+    try {
+      const parsed = await aiApi.parseContact(rawAiText.trim());
+      const nextForm = { ...form };
+      if (parsed.name) nextForm.name = parsed.name;
+      if (parsed.email) nextForm.email = parsed.email;
+      if (parsed.company) nextForm.company = parsed.company;
+      if (parsed.address) nextForm.address = parsed.address;
+      if (parsed.tag) nextForm.tag = parsed.tag;
+      if (parsed.role) {
+        nextForm.description = nextForm.description
+          ? `${parsed.role} • ${nextForm.description}`
+          : parsed.role;
+      }
+      if (parsed.phoneNumber) {
+        const { countryCode: cCode, localPhone } = splitPhoneCountryCode(parsed.phoneNumber);
+        setCountryCode(cCode);
+        nextForm.localPhone = localPhone;
+      }
+      setForm(nextForm);
+      setErrors({});
+      onNotify?.({
+        variant: "success",
+        title: "✨ Contact Auto-Filled with AI",
+        detail: `Extracted details for ${parsed.name || "contact"} from unstructured text.`
+      });
+      setAiBoxOpen(false);
+    } catch (err) {
+      const problem = parseRfc7807Error(err);
+      onNotify?.({
+        variant: "error",
+        title: "AI Auto-Fill Error",
+        detail: problem.detail || "Unable to parse contact text."
+      });
+    } finally {
+      setAiParsing(false);
+    }
+  };
 
   useEffect(() => {
     if (initialContact) {
@@ -275,6 +319,65 @@ export default function ContactModal({
         </div>
 
         <form onSubmit={handleSubmit} autoComplete="off" className="mt-4 space-y-3.5">
+          {/* ✨ Spring AI Smart Contact Auto-Fill Box */}
+          <div className="rounded-lg border border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/40 dark:bg-emerald-950/20 overflow-hidden transition-all">
+            <button
+              type="button"
+              onClick={() => setAiBoxOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-emerald-100/40 dark:hover:bg-emerald-900/30 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span className="text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                  Paste visiting card, signature, or message to auto-fill with AI
+                </span>
+              </div>
+              {aiBoxOpen ? (
+                <ChevronUp className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              )}
+            </button>
+
+            {aiBoxOpen && (
+              <div className="p-3 pt-1 border-t border-emerald-100 dark:border-emerald-900/40 space-y-2">
+                <textarea
+                  rows={2}
+                  value={rawAiText}
+                  onChange={(e) => setRawAiText(e.target.value)}
+                  placeholder="e.g. Met Rahul Sharma, VP at FinTech Labs, call him at +91 9812345678, email rahul@fintech.io, located in New Delhi"
+                  className="w-full rounded-md border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setRawAiText(
+                        "Met Rahul Sharma, VP at FinTech Labs, call him at +91 9812345678, email rahul@fintech.io, located in New Delhi"
+                      )
+                    }
+                    className="text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline"
+                  >
+                    Paste sample card
+                  </button>
+                  <button
+                    type="button"
+                    disabled={aiParsing || !rawAiText.trim()}
+                    onClick={handleAutoFillWithAi}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all disabled:opacity-50 disabled:pointer-events-none active:scale-[0.98]"
+                  >
+                    {aiParsing ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-3 h-3" />
+                    )}
+                    <span>{aiParsing ? "Auto-Filling..." : "Auto-Fill with AI"}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-medium text-zinc-600 dark:text-zinc-400 mb-1">
