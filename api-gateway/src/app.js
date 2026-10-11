@@ -40,8 +40,8 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000);
 // Shared Resilient Nodemailer Transporter for Gmail SMTP
 // ============================================================================
 export const mailTransporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp.gmail.com",
-  port: Number(process.env.SMTP_PORT) || 587,
+  host: process.env.SMTP_HOST || process.env.MAIL_HOST || "smtp.gmail.com",
+  port: Number(process.env.SMTP_PORT) || Number(process.env.MAIL_PORT) || 587,
   secure: false, // true for 465, false for 587 with STARTTLS
   auth: {
     user: process.env.SMTP_USER || process.env.MAIL_USERNAME || "scm.project.12@gmail.com",
@@ -2068,7 +2068,7 @@ app.post("/v1/notifications/emails", async (req, res, next) => {
       }
       if (isLiveDbEnabled()) {
         await mailTransporter.sendMail({
-          from: `"Smart Contact Manager" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+          from: `"Smart Contact Manager" <${process.env.SMTP_USER || process.env.MAIL_USERNAME || "scm.project.12@gmail.com"}>`,
           to: emailTo,
           subject: emailSubject,
           text: emailBody,
