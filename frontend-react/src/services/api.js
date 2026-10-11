@@ -612,16 +612,86 @@ export const notificationApi = {
 
 export const aiApi = {
   async parseContact(rawText) {
-    const response = await api.post("/v1/ai/parse-contact", { rawText });
-    return response.data;
+    try {
+      const response = await api.post("/v1/ai/parse-contact", { rawText });
+      return response.data;
+    } catch (_err) {
+      // Resilient client-side fallback (handles offline, 404, or stale gateway process)
+      const trimmed = String(rawText || "").trim();
+      const emailMatch = trimmed.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+      const phoneMatch = trimmed.match(/(\+?[0-9][0-9\-\s()]{7,18}[0-9])/);
+      const nameMatch = trimmed.match(/(?:\bmet\s+|\bname[:\s]+|\bcontact[:\s]+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i);
+      const companyMatch = trimmed.match(/(?:at|from|company[:\s]+)\s+([A-Z0-9][A-Za-z0-9&.\s]+?)(?:,|\.|\bcall\b|\bemail\b|\blocated\b|$)/i);
+      const roleMatch = trimmed.match(/\b(VP|Vice President|Director|Architect|Engineer|Developer|Manager|Founder|Co-Founder|CEO|CTO|Lead|Consultant)\b(?:\s+(?:of|at|in)?\s+[A-Za-z]+)?/i);
+      const locMatch = trimmed.match(/(?:located in|in|address[:\s]+)\s+([A-Z][a-zA-Z\s]+?)(?:$|\.|,)/i);
+
+      let extractedName = nameMatch ? nameMatch[1].trim() : null;
+      if (extractedName && extractedName.toLowerCase().startsWith("met ")) {
+        extractedName = extractedName.substring(4).trim();
+      }
+      if (!extractedName) {
+        const parts = trimmed.split(/[,\\n]/);
+        for (const p of parts) {
+          const candidate = p.trim();
+          if (/^[A-Z][a-z]+(\s+[A-Z][a-z]+)+$/.test(candidate)) {
+            extractedName = candidate;
+            break;
+          }
+        }
+      }
+
+      let tag = "Colleague";
+      const lower = trimmed.toLowerCase();
+      if (/vip|ceo|founder|director/.test(lower)) tag = "VIP";
+      else if (/lead|client|prospect|fintech|vp/.test(lower)) tag = "Lead";
+      else if (/family|cousin|brother|sister/.test(lower)) tag = "Family";
+
+      return {
+        name: extractedName || "New Contact",
+        email: emailMatch ? emailMatch[1].trim() : null,
+        phoneNumber: phoneMatch ? phoneMatch[1].replace(/[^0-9+]/g, "").trim() : null,
+        company: companyMatch ? companyMatch[1].trim() : null,
+        role: roleMatch ? roleMatch[0].trim() : null,
+        address: locMatch ? locMatch[1].trim() : null,
+        tag
+      };
+    }
   },
 
   async draftEmail({ contactName, company, prompt }) {
-    const response = await api.post("/v1/ai/draft-email", {
-      contactName,
-      company,
-      prompt
-    });
-    return response.data;
+    try {
+      const response = await api.post("/v1/ai/draft-email", {
+        contactName,
+        company,
+        prompt
+      });
+      return response.data;
+    } catch (_err) {
+      // Resilient client-side fallback (handles offline, 404, or stale gateway process)
+      const cName = contactName && String(contactName).trim() ? String(contactName).trim() : "there";
+      const cCompany = company && String(company).trim() ? String(company).trim() : "";
+      const trimmedPrompt = String(prompt || "").trim();
+      const companyMention = cCompany ? ` at ${cCompany}` : "";
+      const promptLower = trimmedPrompt.toLowerCase();
+
+      let subject;
+      if (promptLower.includes("thank")) {
+        subject = `Thank you - Follow up regarding our discussion`;
+      } else if (promptLower.includes("coffee") || promptLower.includes("meeting")) {
+        subject = `Great meeting you${companyMention} - Next steps`;
+      } else if (promptLower.includes("contract") || promptLower.includes("proposal")) {
+        subject = `Follow up: Contract & Proposal Discussion${companyMention}`;
+      } else if (promptLower.includes("schedule") || promptLower.includes("call")) {
+        subject = `Quick sync on our upcoming roadmap`;
+      } else {
+        let cleanPrompt = trimmedPrompt.replace(/[^a-zA-Z0-9\s]/g, " ").trim();
+        if (cleanPrompt.length > 40) cleanPrompt = cleanPrompt.substring(0, 40).trim() + "...";
+        subject = `Follow-up: ${cleanPrompt}`;
+      }
+
+      const body = `Hi ${cName},\n\nI hope you're having a productive week${companyMention ? ` at ${cCompany}` : ""}.\n\nI wanted to follow up regarding: ${trimmedPrompt}.\n\nPlease let me know your thoughts or when you might have a few minutes for a brief call to align on the next steps.\n\nLooking forward to speaking with you.\n\nBest regards,\nSmart Contact Manager Team`;
+
+      return { subject, body };
+    }
   }
 };
