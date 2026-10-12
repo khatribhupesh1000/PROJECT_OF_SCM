@@ -50,18 +50,27 @@ export default function Signup({ onNotify }) {
           )
         });
       } else {
+        const isDnsOrNetwork = /ENOTFOUND|EAI_AGAIN|unreachable|fetch failed|network|connection/i.test(oauthError);
         let detail = oauthError;
-        if (oauthError === "fetch failed" || /fetch failed/i.test(oauthError)) {
-          detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+        if (isDnsOrNetwork) {
+          detail = "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.";
         } else if (oauthError === "no_account_found") {
           detail = "No account found with this Google email. Please register below.";
         } else if (!oauthError.startsWith("Google authentication notice:") && !oauthError.startsWith("Unable to reach")) {
           detail = `Google authentication notice: ${oauthError}`;
         }
         onNotify?.({
-          variant: "info",
-          title: "Registration Required",
-          detail
+          variant: isDnsOrNetwork ? "warning" : "info",
+          title: isDnsOrNetwork ? "Network Notice" : "Registration Required",
+          detail,
+          action: isDnsOrNetwork ? (
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400 hover:underline text-xs mt-1"
+            >
+              Go to Sign In &rarr;
+            </Link>
+          ) : undefined
         });
       }
       window.history.replaceState({}, document.title, "/signup");
@@ -119,6 +128,22 @@ export default function Signup({ onNotify }) {
   };
 
   const handleGoogleSignup = () => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      onNotify?.({
+        variant: "warning",
+        title: "Offline Network Detected",
+        detail: "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.",
+        action: (
+          <Link
+            to="/login"
+            className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400 hover:underline text-xs mt-1"
+          >
+            Go to Sign In &rarr;
+          </Link>
+        )
+      });
+      return;
+    }
     setLoading(true);
     const GOOGLE_CLIENT_ID = "";
     const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
@@ -128,6 +153,10 @@ export default function Signup({ onNotify }) {
   };
 
   const handleGithubSignup = async () => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      setGithubModalOpen(true);
+      return;
+    }
     setLoading(true);
     try {
       const config = await authApi.getGithubConfig();

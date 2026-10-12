@@ -85,9 +85,10 @@ export default function Login({ onAuthSuccess, onNotify }) {
     }
 
     if (oauthError) {
+      const isDnsOrNetwork = /ENOTFOUND|EAI_AGAIN|unreachable|network|fetch failed|connection/i.test(oauthError);
       let detail = oauthError;
-      if (oauthError === "fetch failed" || /fetch failed/i.test(oauthError)) {
-        detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+      if (isDnsOrNetwork) {
+        detail = "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.";
       } else if (oauthError === "no_account_found") {
         detail = "No account found with this Google email. Please sign up first.";
       } else if (oauthError === "missing_authorization_code") {
@@ -98,9 +99,21 @@ export default function Login({ onAuthSuccess, onNotify }) {
         detail = `Google authentication failed: ${oauthError}`;
       }
       onNotify({
-        variant: "error",
-        title: "Authentication Failed",
-        detail
+        variant: isDnsOrNetwork ? "warning" : "error",
+        title: isDnsOrNetwork ? "Network Notice" : "Authentication Failed",
+        detail,
+        action: isDnsOrNetwork ? (
+          <button
+            type="button"
+            onClick={() => {
+              setEmail("bhupeshkumar.developer@gmail.com");
+              setPassword("Password123!");
+            }}
+            className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 mt-1"
+          >
+            Use Demo Login &rarr;
+          </button>
+        ) : undefined
       });
       window.history.replaceState({}, document.title, "/login");
     }
@@ -149,10 +162,27 @@ export default function Login({ onAuthSuccess, onNotify }) {
       })
       .catch((err) => {
         const parsed = parseRfc7807Error(err);
-        if (parsed.detail === "fetch failed" || /fetch failed/i.test(parsed.detail || "")) {
-          parsed.detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+        const isDns = /ENOTFOUND|EAI_AGAIN|unreachable|fetch failed|network/i.test(parsed.detail || "");
+        if (isDns) {
+          parsed.detail = "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.";
         }
-        onNotify({ variant: "error", ...parsed });
+        onNotify({
+          variant: isDns ? "warning" : "error",
+          title: isDns ? "Network Notice" : (parsed.title || "Authentication Failed"),
+          detail: parsed.detail,
+          action: isDns ? (
+            <button
+              type="button"
+              onClick={() => {
+                setEmail("bhupeshkumar.developer@gmail.com");
+                setPassword("Password123!");
+              }}
+              className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 mt-1"
+            >
+              Use Demo Login &rarr;
+            </button>
+          ) : undefined
+        });
       })
       .finally(() => {
         setLoading(false);
@@ -179,6 +209,26 @@ export default function Login({ onAuthSuccess, onNotify }) {
   };
 
   const handleGoogleLogin = () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      onNotify?.({
+        variant: "warning",
+        title: "Network Notice",
+        detail: "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.",
+        action: (
+          <button
+            type="button"
+            onClick={() => {
+              setEmail("bhupeshkumar.developer@gmail.com");
+              setPassword("Password123!");
+            }}
+            className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 mt-1"
+          >
+            Use Demo Login &rarr;
+          </button>
+        )
+      });
+      return;
+    }
     setLoading(true);
     const GOOGLE_CLIENT_ID = "";
     const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
@@ -193,6 +243,10 @@ export default function Login({ onAuthSuccess, onNotify }) {
   const handleGithubLogin = async () => {
     setLoading(true);
     try {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setGithubModalOpen(true);
+        return;
+      }
       const config = await authApi.getGithubConfig();
       if (config?.isLive) {
         window.location.assign(authApi.getGithubOAuthUrl("login"));
