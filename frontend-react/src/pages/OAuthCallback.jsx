@@ -30,10 +30,14 @@ export default function OAuthCallback({ onAuthSuccess, onNotify }) {
     }
 
     if (error) {
+      let detail = errorDesc || error || "Failed to authenticate with GitHub.";
+      if (detail === "fetch failed" || /fetch failed/i.test(detail)) {
+        detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+      }
       onNotify({
         variant: "error",
         title: "GitHub Authentication Failed",
-        detail: errorDesc || error || "Failed to authenticate with GitHub."
+        detail
       });
       navigate(intent === "signup" ? "/signup" : "/login", { replace: true });
       return;
@@ -89,6 +93,9 @@ export default function OAuthCallback({ onAuthSuccess, onNotify }) {
         })
         .catch((err) => {
           const parsed = parseRfc7807Error(err);
+          if (parsed.detail === "fetch failed" || /fetch failed/i.test(parsed.detail || "")) {
+            parsed.detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+          }
           onNotify({ variant: "error", ...parsed });
           navigate(intent === "signup" ? "/signup" : "/login", { replace: true });
         });

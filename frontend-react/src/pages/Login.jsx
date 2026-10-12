@@ -85,10 +85,18 @@ export default function Login({ onAuthSuccess, onNotify }) {
     }
 
     if (oauthError) {
-      const detail =
-        oauthError === "no_account_found"
-          ? "No account found with this Google email. Please sign up first."
-          : `Google authentication failed: ${oauthError}`;
+      let detail = oauthError;
+      if (oauthError === "fetch failed" || /fetch failed/i.test(oauthError)) {
+        detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+      } else if (oauthError === "no_account_found") {
+        detail = "No account found with this Google email. Please sign up first.";
+      } else if (oauthError === "missing_authorization_code") {
+        detail = "Authorization code was not received. Please sign in again.";
+      } else if (/invalid_grant|expired/i.test(oauthError)) {
+        detail = "Authorization code expired or was already used. Please sign in again.";
+      } else if (!oauthError.startsWith("Google authentication failed:") && !oauthError.startsWith("Unable to reach")) {
+        detail = `Google authentication failed: ${oauthError}`;
+      }
       onNotify({
         variant: "error",
         title: "Authentication Failed",
@@ -140,7 +148,11 @@ export default function Login({ onAuthSuccess, onNotify }) {
         navigate("/");
       })
       .catch((err) => {
-        onNotify({ variant: "error", ...parseRfc7807Error(err) });
+        const parsed = parseRfc7807Error(err);
+        if (parsed.detail === "fetch failed" || /fetch failed/i.test(parsed.detail || "")) {
+          parsed.detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+        }
+        onNotify({ variant: "error", ...parsed });
       })
       .finally(() => {
         setLoading(false);

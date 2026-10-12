@@ -76,10 +76,16 @@ export function getStoredUser() {
         return parsedUser;
       } else if (oauthError) {
         window.history.replaceState({}, document.title, window.location.pathname);
+        let detail = oauthError;
+        if (oauthError === "fetch failed" || /fetch failed/i.test(oauthError)) {
+          detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+        } else if (oauthError === "no_account_found") {
+          detail = "No account found with this email. Please sign up first.";
+        }
         pendingOAuthToast = {
           variant: "error",
-          title: "Authentication Error",
-          detail: oauthError
+          title: "Authentication Failed",
+          detail
         };
       }
     }
@@ -699,11 +705,15 @@ export function parseRfc7807Error(err) {
       errors: data.errors || null
     };
   }
+  let detail = err?.message || "Unable to reach the SCM API server on port 8080.";
+  if (detail === "fetch failed" || /fetch failed/i.test(detail)) {
+    detail = "Unable to reach server. Please check your network connection.";
+  }
   return {
     type: "https://scm.enterprise.io/problems/network-error",
     title: "Connection Error",
     status: err?.response?.status || 503,
-    detail: err?.message || "Unable to reach the SCM API server on port 8080.",
+    detail,
     correlationId: err?.response?.headers?.["x-correlation-id"] || null,
     errors: null
   };

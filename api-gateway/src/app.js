@@ -1,7 +1,12 @@
 import crypto from "node:crypto";
+import dns from "node:dns";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+try {
+  dns.setDefaultResultOrder?.("ipv4first");
+} catch (_e) {}
 import express from "express";
 import yaml from "js-yaml";
 import nodemailer from "nodemailer";
@@ -1408,6 +1413,46 @@ ${organizer.name} & Smart Contact Manager`;
   return results;
 }
 
+/**
+ * Resilient OAuth Fetch Helper:
+ * Wraps external OAuth token and profile requests with an explicit AbortController timeout,
+ * transient retry handling, and friendly error normalization (preventing raw "fetch failed").
+ */
+export async function safeOAuthFetch(url, options = {}, timeoutMs = 6000) {
+  const execute = async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+    } catch (err) {
+      if (err.name === "AbortError") {
+        throw new Error("OAuth provider network request timed out. Please verify your connection.");
+      }
+      const causeMsg = err.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : "";
+      const baseMsg = err.message || "network error";
+      if (baseMsg === "fetch failed") {
+        throw new Error(`Unable to reach OAuth provider servers${causeMsg || ""}. Please verify your network connection.`);
+      }
+      throw new Error(`Unable to reach OAuth provider servers (${baseMsg}).`);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
+  try {
+    return await execute();
+  } catch (firstErr) {
+    if (firstErr.message && /Unable to reach|timed out/i.test(firstErr.message)) {
+      await new Promise((r) => setTimeout(r, 300));
+      return await execute();
+    }
+    throw firstErr;
+  }
+}
+
 function isGoogleOAuthConfigured() {
   const id = String(GOOGLE_CLIENT_ID || "").trim();
   const secret = String(GOOGLE_CLIENT_SECRET || "").trim();
@@ -1563,7 +1608,7 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
   try {
     const redirectUriToUse = GOOGLE_REDIRECT_URI;
 
-    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    const tokenRes = await safeOAuthFetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -1575,13 +1620,13 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
       }).toString()
     });
 
-    let tokenData = await tokenRes.json();
+    let tokenData = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok || !tokenData.access_token) {
       if (tokenData.error === "redirect_uri_mismatch") {
         const altUri = redirectUriToUse.includes(":8081")
           ? "http://localhost:8080/v1/auth/oauth2/google/callback"
           : "http://localhost:8081/login/oauth2/code/google";
-        const retryRes = await fetch("https://oauth2.googleapis.com/token", {
+        const retryRes = await safeOAuthFetch("https://oauth2.googleapis.com/token", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -1592,24 +1637,30 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
             grant_type: "authorization_code"
           }).toString()
         });
-        const retryData = await retryRes.json();
+        const retryData = await retryRes.json().catch(() => ({}));
         if (retryRes.ok && retryData.access_token) {
           tokenData = retryData;
         } else {
-          throw new Error(tokenData.error_description || tokenData.error || "Google token exchange failed");
+          const detail = retryData.error === "invalid_grant"
+            ? "Authorization code expired or already used. Please sign in again."
+            : (retryData.error_description || retryData.error || tokenData.error_description || "Google token exchange failed");
+          throw new Error(detail);
         }
       } else {
-        throw new Error(tokenData.error_description || tokenData.error || "Google token exchange failed");
+        const detail = tokenData.error === "invalid_grant"
+          ? "Authorization code expired or already used. Please sign in again."
+          : (tokenData.error_description || tokenData.error || "Google token exchange failed");
+        throw new Error(detail);
       }
     }
 
     let profile = {};
     try {
-      const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      const userInfoRes = await safeOAuthFetch("https://www.googleapis.com/oauth2/v3/userinfo", {
         headers: { Authorization: `Bearer ${tokenData.access_token}` }
       });
       if (userInfoRes.ok) {
-        profile = await userInfoRes.json();
+        profile = await userInfoRes.json().catch(() => ({}));
       }
     } catch (_e) {}
 
@@ -1675,8 +1726,12 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
     return res.redirect(`${FRONTEND_BASE_URL}/login?${signupParams.toString()}`);
   } catch (err) {
     const targetPage = intent === "signup" ? "signup" : "login";
+    let errorDetail = err.detail || err.message || "oauth_exchange_failed";
+    if (errorDetail === "fetch failed" || /fetch failed/i.test(errorDetail)) {
+      errorDetail = "Unable to reach OAuth provider servers. Please verify your connection.";
+    }
     return res.redirect(
-      `${FRONTEND_BASE_URL}/${targetPage}?oauth_error=${encodeURIComponent(err.detail || err.message || "oauth_exchange_failed")}`
+      `${FRONTEND_BASE_URL}/${targetPage}?oauth_error=${encodeURIComponent(errorDetail)}`
     );
   }
 });
@@ -1721,14 +1776,14 @@ async function resolveGithubProfileFromCodeOrPayload({ code, email, name, github
   // If a GitHub username was supplied via developer prompt/modal fallback, verify against GitHub's public API
   if (cleanUsername) {
     try {
-      const ghUserRes = await fetch(`https://api.github.com/users/${encodeURIComponent(cleanUsername)}`, {
+      const ghUserRes = await safeOAuthFetch(`https://api.github.com/users/${encodeURIComponent(cleanUsername)}`, {
         headers: {
           Accept: "application/vnd.github+json",
           "User-Agent": "Smart-Contact-Manager-SCM"
         }
       });
       if (ghUserRes.ok) {
-        const ghUser = await ghUserRes.json();
+        const ghUser = await ghUserRes.json().catch(() => ({}));
         resolvedName = resolvedName || ghUser.name || ghUser.login || cleanUsername;
         resolvedEmail = resolvedEmail || (ghUser.email ? String(ghUser.email).toLowerCase() : `${cleanUsername.toLowerCase()}@users.noreply.github.com`);
         resolvedGithubId = resolvedGithubId || (ghUser.id ? String(ghUser.id) : `github-${cleanUsername}`);
@@ -1746,7 +1801,7 @@ async function resolveGithubProfileFromCodeOrPayload({ code, email, name, github
 
   if (code && isGithubOAuthConfigured()) {
     try {
-      const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      const tokenRes = await safeOAuthFetch("https://github.com/login/oauth/access_token", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1760,17 +1815,17 @@ async function resolveGithubProfileFromCodeOrPayload({ code, email, name, github
         })
       });
       if (tokenRes.ok) {
-        const tokenData = await tokenRes.json();
+        const tokenData = await tokenRes.json().catch(() => ({}));
         if (tokenData.access_token) {
           const [userRes, emailsRes] = await Promise.all([
-            fetch("https://api.github.com/user", {
+            safeOAuthFetch("https://api.github.com/user", {
               headers: {
                 Authorization: `Bearer ${tokenData.access_token}`,
                 Accept: "application/vnd.github+json",
                 "User-Agent": "Smart-Contact-Manager-SCM"
               }
             }),
-            fetch("https://api.github.com/user/emails", {
+            safeOAuthFetch("https://api.github.com/user/emails", {
               headers: {
                 Authorization: `Bearer ${tokenData.access_token}`,
                 Accept: "application/vnd.github+json",
@@ -1779,13 +1834,13 @@ async function resolveGithubProfileFromCodeOrPayload({ code, email, name, github
             })
           ]);
           if (userRes.ok) {
-            const ghUser = await userRes.json();
+            const ghUser = await userRes.json().catch(() => ({}));
             resolvedName = resolvedName || ghUser.name || ghUser.login || "";
             resolvedEmail = resolvedEmail || (ghUser.email ? String(ghUser.email).toLowerCase() : "");
             resolvedGithubId = resolvedGithubId || (ghUser.id ? String(ghUser.id) : "");
           }
           if (!resolvedEmail && emailsRes.ok) {
-            const ghEmails = await emailsRes.json();
+            const ghEmails = await emailsRes.json().catch(() => []);
             if (Array.isArray(ghEmails) && ghEmails.length > 0) {
               const primary = ghEmails.find((e) => e.primary && e.verified) || ghEmails[0];
               if (primary?.email) {
@@ -1931,8 +1986,9 @@ app.get("/v1/auth/oauth2/github", (req, res) => {
 app.get("/v1/auth/oauth2/github/callback", async (req, res) => {
   const { code, state, email, name, username } = req.query || {};
   const intent = String(state || "").includes("signup") ? "signup" : "login";
+  let resolved = null;
   try {
-    const resolved = await resolveGithubProfileFromCodeOrPayload({ code, email, name, username });
+    resolved = await resolveGithubProfileFromCodeOrPayload({ code, email, name, username });
     const envelope = handleGithubUserAuth({
       ...resolved,
       intent,
@@ -1954,9 +2010,13 @@ app.get("/v1/auth/oauth2/github/callback", async (req, res) => {
     const targetPage = intent === "signup" ? "signup" : "login";
     const userEmail = resolved?.email || email || "";
     const isConflict = err.status === 409 || /already exists/i.test(err.detail || "");
+    let errorDetail = err.detail || err.message || "Account not found. Please sign up first.";
+    if (errorDetail === "fetch failed" || /fetch failed/i.test(errorDetail)) {
+      errorDetail = "Unable to reach OAuth provider servers. Please verify your connection.";
+    }
     const oauthErrorParam = isConflict
       ? `already_registered&email=${encodeURIComponent(userEmail)}`
-      : encodeURIComponent(err.detail || err.message || "Account not found. Please sign up first.");
+      : encodeURIComponent(errorDetail);
     return res.redirect(
       `${FRONTEND_BASE_URL}/${targetPage}?oauth_error=${oauthErrorParam}`
     );

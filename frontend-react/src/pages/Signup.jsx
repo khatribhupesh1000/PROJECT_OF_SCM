@@ -50,13 +50,18 @@ export default function Signup({ onNotify }) {
           )
         });
       } else {
+        let detail = oauthError;
+        if (oauthError === "fetch failed" || /fetch failed/i.test(oauthError)) {
+          detail = "Unable to reach OAuth provider servers. Please verify your connection.";
+        } else if (oauthError === "no_account_found") {
+          detail = "No account found with this Google email. Please register below.";
+        } else if (!oauthError.startsWith("Google authentication notice:") && !oauthError.startsWith("Unable to reach")) {
+          detail = `Google authentication notice: ${oauthError}`;
+        }
         onNotify?.({
           variant: "info",
           title: "Registration Required",
-          detail:
-            oauthError === "no_account_found"
-              ? "No account found with this Google email. Please register below."
-              : `Google authentication notice: ${oauthError}`
+          detail
         });
       }
       window.history.replaceState({}, document.title, "/signup");
