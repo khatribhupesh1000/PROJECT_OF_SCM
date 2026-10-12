@@ -105,6 +105,30 @@
         "null"
       ]
     },
+    "followUpReason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "followUpFixedAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "followUpUrgentSent": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "userEmail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "createdAt": {
       "type": "string",
       "format": "date-time"

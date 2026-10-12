@@ -54,6 +54,18 @@ export function getTagBadgeStyle(tag) {
   }
 }
 
+function toDatetimeLocalValue(dateString) {
+  if (!dateString) return "";
+  try {
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch (_e) {
+    return "";
+  }
+}
+
 export default function ContactDrawer({
   contact,
   onClose,
@@ -72,6 +84,95 @@ export default function ContactDrawer({
   const [savingNotes, setSavingNotes] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [carrierResult, setCarrierResult] = useState(null);
+
+  // ── Follow-Up Meeting & Reminder state ──
+  const [followUpDateInput, setFollowUpDateInput] = useState("");
+  const [followUpReasonInput, setFollowUpReasonInput] = useState("");
+  const [savingFollowUp, setSavingFollowUp] = useState(false);
+
+  useEffect(() => {
+    if (contact) {
+      setFollowUpDateInput(toDatetimeLocalValue(contact.followUpDate));
+      setFollowUpReasonInput(contact.followUpReason || "");
+    } else {
+      setFollowUpDateInput("");
+      setFollowUpReasonInput("");
+    }
+  }, [contact?.id, contact?.followUpDate, contact?.followUpReason]);
+
+  const handleSaveFollowUp = async () => {
+    if (!followUpDateInput) return;
+    setSavingFollowUp(true);
+    try {
+      let isoDateString = followUpDateInput;
+      try {
+        const d = new Date(followUpDateInput);
+        if (!isNaN(d.getTime())) {
+          isoDateString = d.toISOString();
+        }
+      } catch (_e) {}
+
+      let userEmail = null;
+      try {
+        const storedProfile = localStorage.getItem("scm_user_profile");
+        if (storedProfile) {
+          const parsed = JSON.parse(storedProfile);
+          if (parsed?.email) userEmail = parsed.email;
+        }
+      } catch (_) {}
+
+      const payload = {
+        followUpDate: isoDateString,
+        followUpReason: followUpReasonInput.trim(),
+        followUpFixedAt: new Date().toISOString(),
+        followUpUrgentSent: false,
+        userEmail: userEmail || undefined
+      };
+
+      if (onUpdateFollowUpDate) {
+        await onUpdateFollowUpDate(contact, payload);
+      } else {
+        await contactApi.patch(contact.id, payload);
+        onNotify?.({
+          variant: "success",
+          title: "Follow-up scheduled",
+          detail: "Follow-up scheduled! Confirmation email sent via SCM Mail."
+        });
+      }
+    } catch (err) {
+      onNotify?.({ variant: "error", ...parseRfc7807Error(err) });
+    } finally {
+      setSavingFollowUp(false);
+    }
+  };
+
+  const handleClearFollowUp = async () => {
+    setSavingFollowUp(true);
+    try {
+      const payload = {
+        followUpDate: null,
+        followUpReason: null,
+        followUpFixedAt: null,
+        followUpUrgentSent: null
+      };
+      setFollowUpDateInput("");
+      setFollowUpReasonInput("");
+      if (onUpdateFollowUpDate) {
+        await onUpdateFollowUpDate(contact, payload);
+      } else {
+        await contactApi.patch(contact.id, payload);
+        onNotify?.({
+          variant: "success",
+          title: "Follow-up cleared",
+          detail: "Follow-up removed."
+        });
+      }
+    } catch (err) {
+      onNotify?.({ variant: "error", ...parseRfc7807Error(err) });
+    } finally {
+      setSavingFollowUp(false);
+    }
+  };
 
   // ── Inline Email Composer state ──
   const [emailOpen, setEmailOpen] = useState(false);
@@ -622,49 +723,65 @@ export default function ContactDrawer({
               </div>
             </div>
 
-            {/* Follow-up Reminder Date */}
-            <div className="flex items-center justify-between py-1.5 border-t border-zinc-100 dark:border-zinc-800/60 mt-1 pt-2">
-              <span className="text-zinc-500 dark:text-zinc-400 flex items-center gap-1.5">
-                <Calendar className="w-3.5 h-3.5 text-amber-500" />
-                <span>Follow-up Date</span>
-              </span>
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={contact.followUpDate ? String(contact.followUpDate).slice(0, 10) : ""}
-                  onChange={async (e) => {
-                    const val = e.target.value || null;
-                    if (onUpdateFollowUpDate) {
-                      onUpdateFollowUpDate(contact, val);
-                    } else {
-                      try {
-                        await contactApi.patch(contact.id, { followUpDate: val });
-                        onNotify?.({
-                          variant: "success",
-                          title: val ? "Follow-up scheduled" : "Follow-up cleared",
-                          detail: val ? `Reminder set for ${val}` : "Follow-up removed."
-                        });
-                      } catch (err) {
-                        onNotify?.({ variant: "error", ...parseRfc7807Error(err) });
-                      }
-                    }
-                  }}
-                  className="rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-0.5 text-xs text-zinc-900 dark:text-zinc-100 focus:border-amber-400 dark:focus:border-amber-600 focus:outline-none font-mono"
-                />
+            {/* Follow-up Meeting & Reminder Scheduler */}
+            <div className="py-2.5 border-t border-zinc-100 dark:border-zinc-800/60 mt-1 pt-2">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-amber-500" />
+                  <span>Follow-Up Meeting & Reminder</span>
+                </span>
                 {contact.followUpDate && (
                   <button
                     type="button"
-                    onClick={() => {
-                      if (onUpdateFollowUpDate) {
-                        onUpdateFollowUpDate(contact, null);
-                      }
-                    }}
-                    title="Clear follow-up date"
-                    className="p-1 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-xs font-mono rounded hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    onClick={handleClearFollowUp}
+                    title="Remove follow-up reminder"
+                    className="text-[11px] font-mono text-zinc-400 hover:text-rose-500 transition-colors"
                   >
-                    ✕
+                    Clear Reminder ✕
                   </button>
                 )}
+              </div>
+
+              <div className="space-y-2.5 bg-zinc-50/70 dark:bg-zinc-900/60 p-2.5 rounded-lg border border-zinc-200/80 dark:border-zinc-800">
+                <div>
+                  <label className="block text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1">
+                    Meeting Date & Time (IST)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={followUpDateInput}
+                    onChange={(e) => setFollowUpDateInput(e.target.value)}
+                    className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:border-amber-400 dark:focus:border-amber-600 focus:outline-none font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1">
+                    Why is this meeting fixed? (Agenda / Purpose)
+                  </label>
+                  <input
+                    type="text"
+                    value={followUpReasonInput}
+                    onChange={(e) => setFollowUpReasonInput(e.target.value)}
+                    placeholder="e.g. Q4 Contract Review & budget discussion"
+                    className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-amber-400 dark:focus:border-amber-600 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500 truncate max-w-[190px]">
+                    {contact.followUpDate ? "Confirmation email sent on save" : "Auto-dispatches Gmail confirmation"}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!followUpDateInput || savingFollowUp}
+                    onClick={handleSaveFollowUp}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white text-xs font-medium shadow-sm transition-all active:scale-[0.98]"
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{savingFollowUp ? "Saving..." : "Save Reminder"}</span>
+                  </button>
+                </div>
               </div>
             </div>
 

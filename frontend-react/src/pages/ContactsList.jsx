@@ -290,19 +290,23 @@ export default function ContactsList({
     }
   };
 
-  const handleUpdateFollowUpDate = async (contact, newDate) => {
+  const handleUpdateFollowUpDate = async (contact, followUpData) => {
     try {
-      const updated = await contactApi.patch(contact.id, {
-        followUpDate: newDate
-      });
+      const payload =
+        typeof followUpData === "object" && followUpData !== null
+          ? followUpData
+          : { followUpDate: followUpData };
+      const updated = await contactApi.patch(contact.id, payload);
       setContacts((prev) => prev.map((c) => (c.id === contact.id ? updated : c)));
       if (inspectedContact?.id === contact.id) {
         setInspectedContact(updated);
       }
       onNotify({
         variant: "success",
-        title: newDate ? "Follow-up scheduled" : "Follow-up cleared",
-        detail: newDate ? `${updated.name}: reminder set for ${newDate}` : `Reminder removed for ${updated.name}`
+        title: payload.followUpDate ? "Follow-up scheduled" : "Follow-up cleared",
+        detail: payload.followUpDate
+          ? "Follow-up scheduled! Confirmation email sent via SCM Mail."
+          : `Reminder removed for ${updated.name}`
       });
     } catch (err) {
       onNotify({ variant: "error", ...parseRfc7807Error(err) });

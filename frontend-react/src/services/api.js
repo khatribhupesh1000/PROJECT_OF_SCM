@@ -236,6 +236,7 @@ export function getFollowUpStatus(followUpDate) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
+    const parsedDate = new Date(followUpDate);
     const dateStr = String(followUpDate).slice(0, 10);
     const dateParts = dateStr.split("-");
     if (dateParts.length !== 3) return null;
@@ -244,6 +245,13 @@ export function getFollowUpStatus(followUpDate) {
 
     const diffDays = Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
     const formatted = target.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    const hasTime =
+      String(followUpDate).includes("T") &&
+      !isNaN(parsedDate.getTime()) &&
+      (parsedDate.getHours() !== 0 || parsedDate.getMinutes() !== 0);
+    const timeStr = hasTime
+      ? ` at ${parsedDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}`
+      : "";
 
     if (diffDays < 0) {
       return {
@@ -254,20 +262,20 @@ export function getFollowUpStatus(followUpDate) {
     }
     if (diffDays === 0) {
       return {
-        label: "Follow up: Today",
+        label: `Follow up: Today${timeStr}`,
         isToday: true,
         style: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60"
       };
     }
     if (diffDays === 1) {
       return {
-        label: "Follow up: Tomorrow",
+        label: `Follow up: Tomorrow${timeStr}`,
         isTomorrow: true,
         style: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60"
       };
     }
     return {
-      label: `Follow up: ${formatted}`,
+      label: `Follow up: ${formatted}${timeStr}`,
       isUpcoming: true,
       style: "bg-zinc-100 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700"
     };
