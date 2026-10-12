@@ -42,14 +42,14 @@ const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 100);
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000);
 
 // ============================================================================
-// Shared Resilient Nodemailer Transporter for Gmail SMTP
+// Shared Resilient Nodemailer Singleton Transporter for Gmail SMTP (Port 465 SSL)
 // ============================================================================
 export const mailTransporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || process.env.MAIL_HOST || "smtp.gmail.com",
-  port: Number(process.env.SMTP_PORT) || Number(process.env.MAIL_PORT) || 587,
-  secure: false, // true for 465, false for 587 with STARTTLS
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
   auth: {
-    user: process.env.SMTP_USER || process.env.MAIL_USERNAME || "scm.project.12@gmail.com",
+    user: "scm.project.12@gmail.com",
     pass: process.env.SMTP_PASS || process.env.MAIL_PASSWORD || ""
   },
   tls: {
@@ -57,43 +57,59 @@ export const mailTransporter = nodemailer.createTransport({
   }
 });
 
+if (process.env.NODE_ENV !== "test") {
+  mailTransporter.verify((error, success) => {
+    if (error) {
+      console.error("❌ [GMAIL SMTP ERROR]:", error.message);
+    } else {
+      console.log("✅ [GMAIL SMTP READY]: Connected to smtp.gmail.com:465 successfully");
+    }
+  });
+}
+
 /**
  * Dispatches an automated security alert email asynchronously on every successful sign-in
  * without blocking or delaying user authentication.
  */
 export function sendSecurityAlertEmail({ user, provider = "Password", clientIp = "Localhost Client", correlationId = "" }) {
-  if (!user?.email || !isLiveDbEnabled()) return;
+  if (!user?.email || process.env.NODE_ENV === "test") return;
   const targetEmail = String(user.email).trim();
   const userName = user.name || targetEmail.split("@")[0];
-  const formattedTime = new Date().toUTCString();
+  const formattedTime = new Date().toLocaleString("en-US", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "full",
+    timeStyle: "medium"
+  }) + " (IST)";
   const corrId = correlationId || crypto.randomUUID();
 
-  const htmlContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #18181b; background-color: #f4f4f5; border-radius: 8px; max-width: 600px; margin: 0 auto;">
+  const htmlContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #18181b; background-color: #f4f4f5; border-radius: 8px; max-width: 600px; margin: 0 auto; border: 1px solid #e4e4e7;">
     <h2 style="color: #059669; margin-top: 0; font-size: 20px;">Smart Contact Manager &bull; Security Alert</h2>
-    <p style="font-size: 14px; margin-bottom: 16px;">Hello <strong>${userName}</strong>,</p>
+    <p style="font-size: 14px; margin-bottom: 16px;">Hello <strong>${escapeXml(userName)}</strong>,</p>
     <p style="font-size: 14px; margin-bottom: 16px;">We noticed a successful sign-in to your Smart Contact Manager account:</p>
-    <ul style="background: #ffffff; padding: 16px 32px; border-radius: 6px; border: 1px solid #e4e4e7; font-size: 13px; line-height: 1.8; list-style-type: square;">
-      <li><strong>Method:</strong> ${provider}</li>
-      <li><strong>Time:</strong> ${formattedTime}</li>
-      <li><strong>Device IP:</strong> ${clientIp}</li>
-      <li><strong>Correlation ID:</strong> <code style="font-family: monospace; background: #f1f5f9; padding: 2px 4px; border-radius: 4px;">${corrId}</code></li>
-    </ul>
-    <p style="font-size: 13px; color: #71717a; margin-top: 16px;">If this was you, you can safely disregard this email. If you did not authorize this access, please reset your password immediately.</p>
+    <table style="width: 100%; border-collapse: collapse; background: #ffffff; border-radius: 6px; border: 1px solid #e4e4e7; font-size: 13px; margin-bottom: 16px;">
+      <tr><td style="padding: 8px 12px; color: #71717a; width: 35%;"><strong>From / Sender:</strong></td><td style="padding: 8px 12px; color: #18181b;">Smart Contact Manager &lt;scm.project.12@gmail.com&gt;</td></tr>
+      <tr><td style="padding: 8px 12px; color: #71717a;"><strong>To / Receiver:</strong></td><td style="padding: 8px 12px; color: #18181b;">${escapeXml(userName)} &lt;${escapeXml(targetEmail)}&gt;</td></tr>
+      <tr><td style="padding: 8px 12px; color: #71717a;"><strong>Sign-In Method:</strong></td><td style="padding: 8px 12px; color: #059669; font-weight: 600;">${escapeXml(provider)}</td></tr>
+      <tr><td style="padding: 8px 12px; color: #71717a;"><strong>Timestamp:</strong></td><td style="padding: 8px 12px; color: #18181b;">${escapeXml(formattedTime)}</td></tr>
+      <tr><td style="padding: 8px 12px; color: #71717a;"><strong>Client IP / Device:</strong></td><td style="padding: 8px 12px; color: #18181b;">${escapeXml(clientIp)}</td></tr>
+      <tr><td style="padding: 8px 12px; color: #71717a;"><strong>Correlation ID:</strong></td><td style="padding: 8px 12px; font-family: monospace; color: #52525b;">${escapeXml(corrId)}</td></tr>
+    </table>
+    <p style="font-size: 13px; color: #71717a; margin-top: 16px;">If this was you, you can safely disregard this email. If you did not authorize this access, please change your password immediately.</p>
     <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 20px 0;" />
     <p style="font-size: 11px; color: #a1a1aa; margin-bottom: 0;">Smart Contact Manager Automated Security Service &bull; scm.project.12@gmail.com</p>
   </div>`;
 
-  const textContent = `Smart Contact Manager - Security Alert\n\nHello ${userName},\n\nWe noticed a successful sign-in to your Smart Contact Manager account:\n- Method: ${provider}\n- Time: ${formattedTime}\n- Device IP: ${clientIp}\n- Correlation ID: ${corrId}\n\nIf this was you, you can safely disregard this email. If not, reset your password immediately.`;
+  const textContent = `Smart Contact Manager - Security Alert\n\nHello ${userName},\n\nWe noticed a successful sign-in to your Smart Contact Manager account:\n- Sender: Smart Contact Manager <scm.project.12@gmail.com>\n- Receiver: ${userName} <${targetEmail}>\n- Method: ${provider}\n- Time: ${formattedTime}\n- Device IP: ${clientIp}\n- Correlation ID: ${corrId}\n\nIf this was you, you can safely disregard this email. If not, reset your password immediately.`;
 
-  // Asynchronous background dispatch
   mailTransporter.sendMail({
-    from: `"Smart Contact Manager Security" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+    from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
     to: targetEmail,
     subject: "Security Alert: New Sign-In to Your SCM Account",
     text: textContent,
     html: htmlContent
+  }).then((info) => {
+    console.log(`[SECURITY_ALERT] Successfully sent sign-in alert to ${targetEmail} (MessageId: ${info?.messageId || "ok"})`);
   }).catch((err) => {
-    // Non-blocking resilience: log error without disrupting login session
     console.error(`[SECURITY_ALERT] Background email dispatch failed for ${targetEmail}: ${err.message}`);
   });
 }
@@ -942,14 +958,33 @@ const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "Ov23liScmGithubOAuthCl
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "scm_github_oauth_secret";
 const GITHUB_REDIRECT_URI = process.env.GITHUB_REDIRECT_URI || "http://localhost:3000/login";
 
-export async function dispatchEmailNotification({ to, subject, body }) {
-  if (!to) return;
+export async function dispatchEmailNotification({ to, subject, body, recipientName = "" }) {
+  if (!to || process.env.NODE_ENV === "test") return;
   try {
+    const emailTo = String(to).trim();
+    const emailSubject = subject || "Smart Contact Manager Notification";
+    const emailBody = body || "Notification from SCM Enterprise";
+    const formattedTimestamp = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Kolkata",
+      dateStyle: "full",
+      timeStyle: "medium"
+    }) + " (IST)";
     await mailTransporter.sendMail({
-      from: `"Smart Contact Manager Security" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
-      to,
-      subject,
-      text: body
+      from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
+      to: emailTo,
+      subject: emailSubject,
+      text: `Smart Contact Manager Notification\n\nFrom / Sender: "Smart Contact Manager" <scm.project.12@gmail.com>\nTo / Receiver: ${recipientName ? `${recipientName} <${emailTo}>` : emailTo}\nDate: ${formattedTimestamp}\nSubject: ${emailSubject}\n\n${emailBody}\n\nDispatched via SCM Notification Service • scm.project.12@gmail.com`,
+      html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e4e4e7; border-radius: 8px; background: #ffffff;">
+        <div style="font-size: 18px; font-weight: 700; color: #059669; margin-bottom: 14px;">Smart Contact Manager</div>
+        <div style="background: #fafafa; border: 1px solid #f4f4f5; border-radius: 6px; padding: 12px 16px; margin-bottom: 18px; font-size: 12px; color: #52525b; line-height: 1.6;">
+          <div><strong>From / Sender:</strong> "Smart Contact Manager" &lt;scm.project.12@gmail.com&gt;</div>
+          <div><strong>To / Receiver:</strong> ${escapeXml(recipientName ? `${recipientName} <${emailTo}>` : emailTo)}</div>
+          <div><strong>Date:</strong> ${escapeXml(formattedTimestamp)}</div>
+        </div>
+        <div style="font-size: 14px; color: #18181b; line-height: 1.6; white-space: pre-wrap;">${escapeXml(emailBody)}</div>
+        <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0 12px 0;" />
+        <div style="font-size: 11px; color: #a1a1aa; text-align: center;">Sent via SCM Enterprise Notification Service • scm.project.12@gmail.com</div>
+      </div>`
     });
   } catch (err) {
     console.warn("[ASYNC_MAIL_WARN]", err.message);
@@ -1087,9 +1122,11 @@ Hello ${organizer.name},
 ${isUrgent ? `Your scheduled meeting with ${contact.name} is starting in less than one hour!` : `You have a scheduled follow-up meeting with ${contact.name}.`}
 
 --------------------------------------------------
-MEETING DETAILS:
+MEETING PARTICIPANTS & DETAILS:
 --------------------------------------------------
-• Meeting Partner: ${contact.name} (${contactPhone})
+• From / Sender: Smart Contact Manager <scm.project.12@gmail.com>
+• To / Organizer: ${organizer.name} (${organizer.email})
+• Meeting Partner: ${contact.name} (${partnerEmail} | ${contactPhone})
 • Organization: ${contactOrg}
 • Scheduled Time: ${meetingTimeFormatted}
 • Purpose / Agenda: ${agenda}
@@ -1122,8 +1159,16 @@ Dispatched via Smart Contact Manager CRM`;
       <div style="background: ${isUrgent ? "#fef2f2" : "#fafafa"}; border: 1px solid ${isUrgent ? "#fecaca" : "#e4e4e7"}; border-radius: 8px; padding: 18px; margin-bottom: 20px;">
         <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <tr>
-            <td style="padding: 6px 0; color: #71717a; width: 34%;">👤 <strong>Meeting Partner:</strong></td>
-            <td style="padding: 6px 0; color: #18181b;"><strong>${escapeXml(contact.name)}</strong> (${escapeXml(contactPhone)})</td>
+            <td style="padding: 6px 0; color: #71717a; width: 34%;">📧 <strong>From / Sender:</strong></td>
+            <td style="padding: 6px 0; color: #18181b;">Smart Contact Manager &lt;scm.project.12@gmail.com&gt;</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #71717a;">👤 <strong>To / Organizer:</strong></td>
+            <td style="padding: 6px 0; color: #18181b;"><strong>${escapeXml(organizer.name)}</strong> (${escapeXml(organizer.email)})</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #71717a;">🤝 <strong>Meeting Partner:</strong></td>
+            <td style="padding: 6px 0; color: #18181b;"><strong>${escapeXml(contact.name)}</strong> (${escapeXml(partnerEmail)} &bull; ${escapeXml(contactPhone)})</td>
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #71717a;">🏢 <strong>Organization:</strong></td>
@@ -1136,6 +1181,10 @@ Dispatched via Smart Contact Manager CRM`;
           <tr>
             <td style="padding: 6px 0; color: #71717a;">📝 <strong>Purpose / Why:</strong></td>
             <td style="padding: 6px 0; color: #18181b; font-style: italic;">"${escapeXml(agenda)}"</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #71717a;">📅 <strong>Booked At:</strong></td>
+            <td style="padding: 6px 0; color: #52525b;">${escapeXml(fixedAtFormatted)}</td>
           </tr>
         </table>
       </div>
@@ -1164,12 +1213,13 @@ Hi ${contact.name},
 ${isUrgent ? `This is a friendly reminder that your upcoming meeting with ${organizer.name} is starting in less than an hour.` : `This is a confirmation for your upcoming meeting with ${organizer.name}.`}
 
 --------------------------------------------------
-CONFIRMED MEETING DETAILS:
+CONFIRMED MEETING PARTICIPANTS & DETAILS:
 --------------------------------------------------
-• With Whom: ${organizer.name} (${organizer.email})
+• From / Organizer: ${organizer.name} (${organizer.email} | ${organizerPhone})
+• To / Meeting Partner: ${contact.name} (${contact.email})
 • Scheduled Time: ${meetingTimeFormatted}
 • Purpose / Agenda: ${agenda}
-• Organizer Contact: ${organizerPhone}
+• Booked At: ${fixedAtFormatted}
 --------------------------------------------------
 
 If you have any questions or need to reschedule, please reply directly to this email (${organizer.email}).
@@ -1197,8 +1247,12 @@ ${organizer.name} & Smart Contact Manager`;
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 18px; margin-bottom: 20px;">
         <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <tr>
-            <td style="padding: 6px 0; color: #374151; width: 34%;">👤 <strong>With Whom:</strong></td>
-            <td style="padding: 6px 0; color: #111827;"><strong>${escapeXml(organizer.name)}</strong> (${escapeXml(organizer.email)})</td>
+            <td style="padding: 6px 0; color: #374151; width: 34%;">👤 <strong>From / Organizer:</strong></td>
+            <td style="padding: 6px 0; color: #111827;"><strong>${escapeXml(organizer.name)}</strong> (${escapeXml(organizer.email)} &bull; ${escapeXml(organizerPhone)})</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #374151;">🎯 <strong>To / Receiver:</strong></td>
+            <td style="padding: 6px 0; color: #111827;"><strong>${escapeXml(contact.name)}</strong> (${escapeXml(contact.email)})</td>
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #374151;">⏰ <strong>Scheduled Time:</strong></td>
@@ -1207,6 +1261,10 @@ ${organizer.name} & Smart Contact Manager`;
           <tr>
             <td style="padding: 6px 0; color: #374151;">📝 <strong>Purpose / Why:</strong></td>
             <td style="padding: 6px 0; color: #111827; font-style: italic;">"${escapeXml(agenda)}"</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #374151;">📅 <strong>Booked At:</strong></td>
+            <td style="padding: 6px 0; color: #6b7280;">${escapeXml(fixedAtFormatted)}</td>
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #374151;">📞 <strong>Organizer Contact:</strong></td>
@@ -1228,9 +1286,9 @@ ${organizer.name} & Smart Contact Manager`;
       }
 
       const mailOptions = {
-        from: `"Smart Contact Manager Reminders" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+        from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
         to,
-        replyTo: isOrganizer ? (contactEmail || process.env.SMTP_USER || "scm.project.12@gmail.com") : organizerEmail,
+        replyTo: isOrganizer ? (contactEmail || "scm.project.12@gmail.com") : organizerEmail,
         subject,
         text: textBody,
         html: htmlBody
@@ -1318,10 +1376,12 @@ export async function dispatchCancellationEmailToBothParties({
 --------------------------------------------------
 Hello ${organizer.name},
 
-Your scheduled follow-up meeting with ${contact.name} (${contactPhone}) has been cancelled.
+Your scheduled follow-up meeting with ${contact.name} has been cancelled.
 
-CANCELLATION DETAILS:
-• Meeting Partner: ${contact.name} (${contactPhone})
+CANCELLATION PARTICIPANTS & DETAILS:
+• From / Sender: Smart Contact Manager <scm.project.12@gmail.com>
+• To / Organizer: ${organizer.name} (${organizer.email})
+• Meeting Partner: ${contact.name} (${contactPhone} | ${contact.email || "N/A"})
 • Originally Scheduled For: ${meetingTimeFormatted}
 • Reason for Cancellation: ${reasonText}
 • Cancelled On: ${cancelledAtFormatted}
@@ -1339,7 +1399,9 @@ Dispatched via Smart Contact Manager CRM`;
     <p style="font-size: 15px; color: #18181b; line-height: 1.5;">Hello <strong>${escapeXml(organizer.name)}</strong>,</p>
     <p style="font-size: 14px; color: #3f3f46; line-height: 1.5;">The following scheduled follow-up meeting has been cancelled:</p>
     <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #fef2f2; border-radius: 8px; font-size: 13px;">
-      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d; width: 140px;">Meeting Partner:</td><td style="padding: 10px 14px; color: #18181b;">${escapeXml(partnerNameForOrganizer)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d; width: 150px;">📧 From / Sender:</td><td style="padding: 10px 14px; color: #18181b;">Smart Contact Manager &lt;scm.project.12@gmail.com&gt;</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">👤 To / Organizer:</td><td style="padding: 10px 14px; color: #18181b;"><strong>${escapeXml(organizer.name)}</strong> (${escapeXml(organizer.email)})</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">🤝 Meeting Partner:</td><td style="padding: 10px 14px; color: #18181b;">${escapeXml(partnerNameForOrganizer)}</td></tr>
       <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Original Time:</td><td style="padding: 10px 14px; text-decoration: line-through; color: #71717a;">${escapeXml(meetingTimeFormatted)}</td></tr>
       <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Reason:</td><td style="padding: 10px 14px; font-weight: 600; color: #b91c1c;">${escapeXml(reasonText)}</td></tr>
       <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Cancelled On:</td><td style="padding: 10px 14px; color: #52525b;">${escapeXml(cancelledAtFormatted)}</td></tr>
@@ -1357,13 +1419,15 @@ Hi ${contact.name},
 
 Your upcoming meeting with ${organizer.name} has been cancelled.
 
-CANCELLATION DETAILS:
+CANCELLATION PARTICIPANTS & DETAILS:
+• From / Organizer: ${organizer.name} (${organizer.email} | ${organizer.phoneNumber || "N/A"})
+• To / Meeting Partner: ${contact.name} (${contact.email})
 • Originally Scheduled For: ${meetingTimeFormatted}
 • Reason Given: "${reasonText}"
-• Organizer Contact Info: ${partnerNameForContact}
+• Cancelled On: ${cancelledAtFormatted}
 --------------------------------------------------
 
-If you have questions or wish to reschedule, please contact ${organizer.name} directly.
+If you have questions or wish to reschedule, please contact ${organizer.name} directly at ${organizer.email}.
 
 Best regards,
 ${organizer.name} & Smart Contact Manager`;
@@ -1378,10 +1442,11 @@ ${organizer.name} & Smart Contact Manager`;
     <p style="font-size: 15px; color: #18181b; line-height: 1.5;">Hello <strong>${escapeXml(contact.name)}</strong>,</p>
     <p style="font-size: 14px; color: #3f3f46; line-height: 1.5;">Your upcoming meeting with <strong>${escapeXml(organizer.name)}</strong> has been cancelled.</p>
     <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #fef2f2; border-radius: 8px; font-size: 13px;">
-      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d; width: 140px;">Meeting Partner:</td><td style="padding: 10px 14px; color: #18181b;">${escapeXml(partnerNameForContact)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d; width: 150px;">👤 From / Organizer:</td><td style="padding: 10px 14px; color: #18181b;">${escapeXml(partnerNameForContact)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">🎯 To / Receiver:</td><td style="padding: 10px 14px; color: #18181b;"><strong>${escapeXml(contact.name)}</strong> (${escapeXml(contact.email)})</td></tr>
       <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Original Time:</td><td style="padding: 10px 14px; text-decoration: line-through; color: #71717a;">${escapeXml(meetingTimeFormatted)}</td></tr>
       <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Reason:</td><td style="padding: 10px 14px; font-weight: 600; color: #b91c1c;">${escapeXml(reasonText)}</td></tr>
-      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Organizer Email:</td><td style="padding: 10px 14px; color: #52525b;"><a href="mailto:${escapeXml(organizer.email)}" style="color: #dc2626; font-weight: 600;">${escapeXml(organizer.email)}</a></td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Organizer Contact:</td><td style="padding: 10px 14px; color: #52525b;"><a href="mailto:${escapeXml(organizer.email)}" style="color: #dc2626; font-weight: 600;">${escapeXml(organizer.email)}</a></td></tr>
     </table>
     <p style="font-size: 12px; color: #71717a; margin-top: 20px; border-top: 1px solid #fee2e2; padding-top: 12px;">Dispatched via SCM Mail Service &bull; scm.project.12@gmail.com</p>
   </div>
@@ -1390,9 +1455,9 @@ ${organizer.name} & Smart Contact Manager`;
       }
 
       const mailOptions = {
-        from: `"Smart Contact Manager Reminders" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+        from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
         to,
-        replyTo: isOrganizer ? (contactEmail || process.env.SMTP_USER || "scm.project.12@gmail.com") : organizerEmail,
+        replyTo: isOrganizer ? (contactEmail || "scm.project.12@gmail.com") : organizerEmail,
         subject,
         text: textBody,
         html: htmlBody
@@ -1609,11 +1674,21 @@ function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, inten
       console.warn("[ASYNC_DB_WARN]", dbErr.message);
     }
 
-    dispatchEmailNotification({
-      to: user.email,
-      subject: intent === "signup" ? "Welcome to Smart Contact Manager" : "Security Alert: New Sign-In",
-      body: `Successful ${intent} via Google OAuth.`
-    }).catch((err) => console.warn("[ASYNC_MAIL_WARN]", err.message));
+    if (intent === "login" || !isNewUser) {
+      sendSecurityAlertEmail({
+        user,
+        provider: "Google OAuth 2.0",
+        clientIp: "Google OAuth Client",
+        correlationId
+      });
+    } else {
+      dispatchEmailNotification({
+        to: user.email,
+        recipientName: user.name,
+        subject: "Welcome to Smart Contact Manager",
+        body: "Welcome to Smart Contact Manager! Your Google account has been successfully registered."
+      }).catch((err) => console.warn("[ASYNC_MAIL_WARN]", err.message));
+    }
   });
 
   const accessToken = signJwtHmacSha256({
@@ -2864,17 +2939,27 @@ app.post("/v1/notifications/emails", async (req, res, next) => {
       if (req.body?.simulateSmtpTimeout) {
         throw new Error("Simulated Gmail SMTP connection timeout");
       }
-      if (isLiveDbEnabled()) {
+      if (isLiveDbEnabled() && process.env.NODE_ENV !== "test") {
+        const formattedTimestamp = new Date().toLocaleString("en-US", {
+          timeZone: "Asia/Kolkata",
+          dateStyle: "full",
+          timeStyle: "medium"
+        }) + " (IST)";
         await mailTransporter.sendMail({
-          from: `"Smart Contact Manager" <${process.env.SMTP_USER || process.env.MAIL_USERNAME || "scm.project.12@gmail.com"}>`,
+          from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
           to: emailTo,
           subject: emailSubject,
-          text: emailBody,
-          html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e4e4e7; border-radius: 8px;">
-            <div style="font-size: 18px; font-weight: 600; color: #18181b; margin-bottom: 12px;">Smart Contact Manager</div>
-            <div style="font-size: 14px; color: #3f3f46; line-height: 1.6; white-space: pre-wrap;">${emailBody.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>
+          text: `Smart Contact Manager Notification\n\nFrom / Sender: "Smart Contact Manager" <scm.project.12@gmail.com>\nTo / Receiver: ${emailTo}\nDate: ${formattedTimestamp}\nSubject: ${emailSubject}\n\n${emailBody}\n\nSent via SCM Enterprise Notification Service • scm.project.12@gmail.com`,
+          html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e4e4e7; border-radius: 8px; background: #ffffff;">
+            <div style="font-size: 18px; font-weight: 700; color: #059669; margin-bottom: 12px;">Smart Contact Manager</div>
+            <div style="background: #fafafa; border: 1px solid #f4f4f5; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #52525b; line-height: 1.5;">
+              <div><strong>From / Sender:</strong> "Smart Contact Manager" &lt;scm.project.12@gmail.com&gt;</div>
+              <div><strong>To / Receiver:</strong> ${escapeXml(emailTo)}</div>
+              <div><strong>Date:</strong> ${escapeXml(formattedTimestamp)}</div>
+            </div>
+            <div style="font-size: 14px; color: #18181b; line-height: 1.6; white-space: pre-wrap;">${escapeXml(emailBody)}</div>
             <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0 12px 0;" />
-            <div style="font-size: 11px; color: #a1a1aa;">Sent via SCM Enterprise Notification Service • scm.project.12@gmail.com</div>
+            <div style="font-size: 11px; color: #a1a1aa; text-align: center;">Sent via SCM Enterprise Notification Service • scm.project.12@gmail.com</div>
           </div>`
         });
       }

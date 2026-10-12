@@ -1005,8 +1005,13 @@ export default function ContactDrawer({
                   </div>
                 ) : (
                   <>
-                    <div className="text-[11px] text-zinc-500 dark:text-zinc-400 font-mono">
-                      <span className="truncate">To: {contact.email}</span>
+                    <div className="space-y-1 bg-zinc-50 dark:bg-zinc-800/40 p-2 rounded-md border border-zinc-200 dark:border-zinc-700/60 text-[11px] font-mono">
+                      <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
+                        <span><strong className="text-zinc-700 dark:text-zinc-300">From:</strong> "Smart Contact Manager" &lt;scm.project.12@gmail.com&gt;</span>
+                      </div>
+                      <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
+                        <span className="truncate"><strong className="text-zinc-700 dark:text-zinc-300">To:</strong> {contact.name ? `${contact.name} <${contact.email}>` : contact.email}</span>
+                      </div>
                     </div>
 
                     {aiDraftOpen && (
@@ -1176,6 +1181,22 @@ export default function ContactDrawer({
                     placeholder="e.g. Q4 Contract Review & budget discussion"
                     className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-amber-400 dark:focus:border-amber-600 focus:outline-none"
                   />
+                </div>
+
+                <div className="bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/70 dark:border-amber-900/40 rounded-md p-2 space-y-1 text-[11px]">
+                  <div className="flex items-center justify-between text-zinc-600 dark:text-zinc-300">
+                    <span className="font-semibold text-amber-800 dark:text-amber-300">👥 Meeting Participants (Gmail 465 SSL Dual-Alert):</span>
+                  </div>
+                  <div className="text-zinc-600 dark:text-zinc-400 flex items-center justify-between">
+                    <span><strong>Organizer:</strong> Account Owner</span>
+                    <span className="font-mono text-[10px] text-emerald-600 dark:text-emerald-400">Host (Alert Recipient)</span>
+                  </div>
+                  <div className="text-zinc-600 dark:text-zinc-400 flex items-center justify-between">
+                    <span className="truncate max-w-[200px]"><strong>Partner:</strong> {contact.name}</span>
+                    <span className="font-mono text-[10px] text-zinc-500">
+                      {contact.email ? contact.email : "No email (Host only)"}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-1">
