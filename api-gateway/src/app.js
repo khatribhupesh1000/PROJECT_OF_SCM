@@ -1036,22 +1036,17 @@ export async function dispatchFollowUpToBothParties({ user, contact, isUrgent = 
   if (!contact) return [];
   const organizer = resolveOrganizerUser(user, contact);
 
+  const organizerEmail = organizer?.email ? String(organizer.email).trim().toLowerCase() : null;
+  const contactEmail = contact?.email ? String(contact.email).trim().toLowerCase() : null;
+
   const recipients = [];
-
-  // 1. Person 1 (The Organizer / Account Owner)
-  if (organizer?.email && String(organizer.email).trim() !== "") {
-    recipients.push({
-      to: String(organizer.email).trim(),
-      isOrganizer: true
-    });
+  if (organizerEmail) {
+    recipients.push({ to: organizerEmail, isOrganizer: true });
   }
-
-  // 2. Person 2 (The Contact / Meeting Partner), if email is present
-  if (contact?.email && String(contact.email).trim() !== "") {
-    recipients.push({
-      to: String(contact.email).trim(),
-      isOrganizer: false
-    });
+  if (contactEmail) {
+    if (!organizerEmail || contactEmail !== organizerEmail) {
+      recipients.push({ to: contactEmail, isOrganizer: false });
+    }
   }
 
   const meetingTimeFormatted = formatMeetingDateKolkata(contact.followUpDate);
@@ -1062,8 +1057,14 @@ export async function dispatchFollowUpToBothParties({ user, contact, isUrgent = 
   const organizerPhone = organizer.phoneNumber || organizer.email || "N/A";
   const cleanContactDigits = String(contact.phoneNumber || "").replace(/\D/g, "");
 
-  return Promise.allSettled(
-    recipients.map(async ({ to, isOrganizer }) => {
+  const results = [];
+  // Send SEQUENTIALLY to avoid Gmail SMTP 587 concurrent connection drops
+  for (const { to, isOrganizer } of recipients) {
+    try {
+      const partnerName = isOrganizer ? contact.name : organizer.name;
+      const partnerEmail = isOrganizer ? contact.email || "N/A" : organizer.email;
+      const partnerPhone = isOrganizer ? contact.phoneNumber || "N/A" : organizer.phoneNumber || "N/A";
+
       let subject = "";
       let textBody = "";
       let htmlBody = "";
@@ -1221,15 +1222,28 @@ ${organizer.name} & Smart Contact Manager`;
 </html>`;
       }
 
-      return mailTransporter.sendMail({
+      const mailOptions = {
         from: `"Smart Contact Manager Reminders" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
         to,
+        replyTo: isOrganizer ? (contactEmail || process.env.SMTP_USER || "scm.project.12@gmail.com") : organizerEmail,
         subject,
         text: textBody,
         html: htmlBody
-      });
-    })
-  );
+      };
+
+      const info = await mailTransporter.sendMail(mailOptions);
+      console.log(`[SMTP SUCCESS] Follow-up email sent to ${to} (MessageId: ${info?.messageId || "ok"})`);
+      results.push({ status: "fulfilled", to, messageId: info?.messageId });
+
+      // Small 500ms pause to prevent Gmail SMTP connection throttling
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch (err) {
+      console.error(`[SMTP ERROR] Failed sending follow-up email to ${to}:`, err.message);
+      results.push({ status: "rejected", to, reason: err.message });
+    }
+  }
+
+  return results;
 }
 
 export async function dispatchFollowUpConfirmationEmail(contact, recipientEmail) {
@@ -1255,22 +1269,17 @@ export async function dispatchCancellationEmailToBothParties({
   if (!contact) return [];
   const organizer = resolveOrganizerUser(user, contact);
 
+  const organizerEmail = organizer?.email ? String(organizer.email).trim().toLowerCase() : null;
+  const contactEmail = contact?.email ? String(contact.email).trim().toLowerCase() : null;
+
   const recipients = [];
-
-  // 1. Person 1 (The Organizer / Account Owner)
-  if (organizer?.email && String(organizer.email).trim() !== "") {
-    recipients.push({
-      to: String(organizer.email).trim(),
-      isOrganizer: true
-    });
+  if (organizerEmail) {
+    recipients.push({ to: organizerEmail, isOrganizer: true });
   }
-
-  // 2. Person 2 (The Contact / Meeting Partner), if email is present
-  if (contact?.email && String(contact.email).trim() !== "") {
-    recipients.push({
-      to: String(contact.email).trim(),
-      isOrganizer: false
-    });
+  if (contactEmail) {
+    if (!organizerEmail || contactEmail !== organizerEmail) {
+      recipients.push({ to: contactEmail, isOrganizer: false });
+    }
   }
 
   const meetingTimeFormatted = originalMeetingTime
@@ -1289,8 +1298,10 @@ export async function dispatchCancellationEmailToBothParties({
     timeStyle: "short"
   });
 
-  return Promise.allSettled(
-    recipients.map(async ({ to, isOrganizer }) => {
+  const results = [];
+  // Send SEQUENTIALLY to avoid Gmail SMTP 587 concurrent connection drops
+  for (const { to, isOrganizer } of recipients) {
+    try {
       let subject = "";
       let textBody = "";
       let htmlBody = "";
@@ -1373,15 +1384,28 @@ ${organizer.name} & Smart Contact Manager`;
 </html>`;
       }
 
-      return mailTransporter.sendMail({
+      const mailOptions = {
         from: `"Smart Contact Manager Reminders" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
         to,
+        replyTo: isOrganizer ? (contactEmail || process.env.SMTP_USER || "scm.project.12@gmail.com") : organizerEmail,
         subject,
         text: textBody,
         html: htmlBody
-      });
-    })
-  );
+      };
+
+      const info = await mailTransporter.sendMail(mailOptions);
+      console.log(`[SMTP SUCCESS] Cancellation email sent to ${to} (MessageId: ${info?.messageId || "ok"})`);
+      results.push({ status: "fulfilled", to, messageId: info?.messageId });
+
+      // Small 500ms pause to prevent Gmail SMTP connection throttling
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } catch (err) {
+      console.error(`[SMTP ERROR] Failed sending cancellation email to ${to}:`, err.message);
+      results.push({ status: "rejected", to, reason: err.message });
+    }
+  }
+
+  return results;
 }
 
 function isGoogleOAuthConfigured() {
