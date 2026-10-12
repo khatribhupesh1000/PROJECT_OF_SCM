@@ -987,210 +987,259 @@ function formatBookingTimestampKolkata(dateString) {
   }
 }
 
+function resolveOrganizerUser(userOrEmail, contact) {
+  let email = typeof userOrEmail === "string" ? userOrEmail : userOrEmail?.email;
+  if (!email && contact?.userEmail) {
+    email = contact.userEmail;
+  }
+  let resolved = null;
+  if (email) {
+    resolved = usersStore.get(String(email).trim().toLowerCase());
+  }
+  if (!resolved && contact?.userId) {
+    for (const u of usersStore.values()) {
+      if (u.id === contact.userId) {
+        resolved = u;
+        break;
+      }
+    }
+  }
+  if (resolved) {
+    return {
+      id: resolved.id,
+      name: resolved.name || "Organizer",
+      email: resolved.email,
+      phoneNumber: resolved.phoneNumber || ""
+    };
+  }
+  if (typeof userOrEmail === "object" && userOrEmail?.email) {
+    return {
+      id: userOrEmail.id || "usr-unknown",
+      name: userOrEmail.name || userOrEmail.email.split("@")[0] || "Organizer",
+      email: userOrEmail.email,
+      phoneNumber: userOrEmail.phoneNumber || ""
+    };
+  }
+  return {
+    id: "usr-default",
+    name: "Organizer",
+    email: email || process.env.SMTP_USER || "scm.project.12@gmail.com",
+    phoneNumber: ""
+  };
+}
+
 /**
- * Trigger 1: Instant Confirmation Email (At Time of Scheduling)
+ * Dual-Recipient Notification Dispatcher:
+ * Dispatches tailored follow-up alerts to BOTH Person 1 (Organizer) and Person 2 (Contact).
  */
-export async function dispatchFollowUpConfirmationEmail(contact, recipientEmail) {
-  if (!contact) return;
-  const targetEmail = recipientEmail || contact.userEmail || process.env.SMTP_USER || "scm.project.12@gmail.com";
-  const ccEmail = contact.email && contact.email.includes("@") && contact.email !== targetEmail ? contact.email : undefined;
+export async function dispatchFollowUpToBothParties({ user, contact, isUrgent = false }) {
+  if (!contact) return [];
+  const organizer = resolveOrganizerUser(user, contact);
+
+  const recipients = [];
+
+  // 1. Person 1 (The Organizer / Account Owner)
+  if (organizer?.email && String(organizer.email).trim() !== "") {
+    recipients.push({
+      to: String(organizer.email).trim(),
+      isOrganizer: true
+    });
+  }
+
+  // 2. Person 2 (The Contact / Meeting Partner), if email is present
+  if (contact?.email && String(contact.email).trim() !== "") {
+    recipients.push({
+      to: String(contact.email).trim(),
+      isOrganizer: false
+    });
+  }
 
   const meetingTimeFormatted = formatMeetingDateKolkata(contact.followUpDate);
   const fixedAtFormatted = formatBookingTimestampKolkata(contact.followUpFixedAt);
-  const companyOrg = contact.company ? contact.company.trim() : "Direct Contact";
-  const agenda = contact.followUpReason ? contact.followUpReason.trim() : "Follow-Up Discussion & Review";
-  const subject = `🗓️ Meeting Scheduled: Follow-Up with ${contact.name}`;
+  const agenda = contact.followUpReason ? contact.followUpReason.trim() : "General Follow-Up";
+  const contactOrg = contact.company ? contact.company.trim() : "Direct Contact";
+  const contactPhone = contact.phoneNumber || "N/A";
+  const organizerPhone = organizer.phoneNumber || organizer.email || "N/A";
+  const cleanContactDigits = String(contact.phoneNumber || "").replace(/\D/g, "");
 
-  const textBody = `MEETING CONFIRMATION - SMART CONTACT MANAGER
+  return Promise.allSettled(
+    recipients.map(async ({ to, isOrganizer }) => {
+      let subject = "";
+      let textBody = "";
+      let htmlBody = "";
 
-Hello,
+      if (isOrganizer) {
+        // ── Template A: For Person 1 (The Organizer) ──
+        subject = isUrgent
+          ? `⚡ Starting in less than an hour: Follow-up with ${contact.name}`
+          : `🗓️ Meeting Reminder: Follow-up with ${contact.name}`;
 
-A new follow-up meeting has been scheduled in your Smart Contact Manager CRM.
+        textBody = `${isUrgent ? "URGENT MEETING ALERT - LESS THAN 1 HOUR AWAY" : "SCHEDULED MEETING DETAILS - ORGANIZER CONFIRMATION"}
+
+Hello ${organizer.name},
+
+${isUrgent ? `Your scheduled meeting with ${contact.name} is starting in less than one hour!` : `You have a scheduled follow-up meeting with ${contact.name}.`}
 
 --------------------------------------------------
-DETAILS OF THE SCHEDULED MEETING:
+MEETING DETAILS:
 --------------------------------------------------
-• With Whom: ${contact.name} (${contact.phoneNumber})
-• Organization: ${companyOrg}
-• Scheduled Meeting Time: ${meetingTimeFormatted}
+• Meeting Partner: ${contact.name} (${contactPhone})
+• Organization: ${contactOrg}
+• Scheduled Time: ${meetingTimeFormatted}
 • Purpose / Agenda: ${agenda}
-• Booked / Fixed At: ${fixedAtFormatted}
+• Booked At: ${fixedAtFormatted}
 --------------------------------------------------
 
 1-CLICK DIRECT ACTIONS:
-• Call Directly: tel:${contact.phoneNumber}
-• Message on WhatsApp: https://wa.me/${String(contact.phoneNumber).replace(/\D/g, "")}
+• Call Partner: tel:${contact.phoneNumber}
+• WhatsApp Chat: https://wa.me/${cleanContactDigits}
 
-Best regards,
-Smart Contact Manager (SCM) Notification Service`;
+Dispatched via Smart Contact Manager CRM`;
 
-  const htmlBody = `
+        htmlBody = `
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>${escapeXml(subject)}</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
-  <div style="max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-    <div style="background: #18181b; padding: 20px 24px; color: #ffffff;">
-      <h2 style="margin: 0; font-size: 18px; font-weight: 600;">
-        🗓️ Meeting Scheduled: Follow-Up Confirmation
+<head><meta charset="utf-8"><title>${escapeXml(subject)}</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
+  <div style="max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid ${isUrgent ? "#ef4444" : "#e4e4e7"}; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="background: ${isUrgent ? "#dc2626" : "#18181b"}; padding: 20px 24px; color: #ffffff;">
+      <h2 style="margin: 0; font-size: 18px; font-weight: 700;">
+        ${isUrgent ? "⚡ Meeting in Less Than an Hour!" : "🗓️ Meeting Reminder"}
       </h2>
-      <p style="margin: 6px 0 0; font-size: 12px; color: #a1a1aa;">Smart Contact Manager CRM Notification</p>
+      <p style="margin: 6px 0 0; font-size: 12px; color: ${isUrgent ? "#fee2e2" : "#a1a1aa"};">Organizer Alert &bull; Smart Contact Manager</p>
     </div>
     <div style="padding: 24px;">
       <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #3f3f46;">
-        Your follow-up meeting with <strong>${escapeXml(contact.name)}</strong> has been scheduled successfully.
+        Hello <strong>${escapeXml(organizer.name)}</strong>, you have a scheduled meeting with <strong>${escapeXml(contact.name)}</strong>.
       </p>
 
-      <div style="background: #fafafa; border: 1px solid #e4e4e7; border-radius: 8px; padding: 18px; margin-bottom: 20px;">
+      <div style="background: ${isUrgent ? "#fef2f2" : "#fafafa"}; border: 1px solid ${isUrgent ? "#fecaca" : "#e4e4e7"}; border-radius: 8px; padding: 18px; margin-bottom: 20px;">
         <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <tr>
-            <td style="padding: 6px 0; color: #71717a; width: 36%;">👤 <strong>With Whom:</strong></td>
-            <td style="padding: 6px 0; color: #18181b;"><strong>${escapeXml(contact.name)}</strong> (${escapeXml(contact.phoneNumber)})</td>
+            <td style="padding: 6px 0; color: #71717a; width: 34%;">👤 <strong>Meeting Partner:</strong></td>
+            <td style="padding: 6px 0; color: #18181b;"><strong>${escapeXml(contact.name)}</strong> (${escapeXml(contactPhone)})</td>
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #71717a;">🏢 <strong>Organization:</strong></td>
-            <td style="padding: 6px 0; color: #18181b;">${escapeXml(companyOrg)}</td>
+            <td style="padding: 6px 0; color: #18181b;">${escapeXml(contactOrg)}</td>
           </tr>
           <tr>
-            <td style="padding: 6px 0; color: #71717a;">⏰ <strong>Exact Meeting Time:</strong></td>
-            <td style="padding: 6px 0; color: #047857; font-weight: 700; font-size: 14px;">${escapeXml(meetingTimeFormatted)}</td>
+            <td style="padding: 6px 0; color: #71717a;">⏰ <strong>Scheduled Time:</strong></td>
+            <td style="padding: 6px 0; color: #059669; font-weight: 700; font-size: 14px;">${escapeXml(meetingTimeFormatted)}</td>
           </tr>
           <tr>
-            <td style="padding: 6px 0; color: #71717a;">📝 <strong>Purpose / Agenda:</strong></td>
+            <td style="padding: 6px 0; color: #71717a;">📝 <strong>Purpose / Why:</strong></td>
             <td style="padding: 6px 0; color: #18181b; font-style: italic;">"${escapeXml(agenda)}"</td>
-          </tr>
-          <tr>
-            <td style="padding: 6px 0; color: #71717a;">📅 <strong>When Fixed:</strong></td>
-            <td style="padding: 6px 0; color: #52525b; font-size: 12px;">${escapeXml(fixedAtFormatted)}</td>
           </tr>
         </table>
       </div>
 
       <div style="display: flex; gap: 12px; margin-top: 20px;">
         <a href="tel:${escapeXml(contact.phoneNumber)}" style="display: inline-block; background: #059669; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600;">📞 Call ${escapeXml(contact.name)}</a>
-        <a href="https://wa.me/${String(contact.phoneNumber).replace(/\D/g, "")}" style="display: inline-block; background: #25D366; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-left: 8px;">💬 WhatsApp Chat</a>
+        <a href="https://wa.me/${cleanContactDigits}" style="display: inline-block; background: #25D366; color: #ffffff; text-decoration: none; padding: 10px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; margin-left: 8px;">💬 WhatsApp Chat</a>
       </div>
     </div>
     <div style="background: #f4f4f5; padding: 12px 24px; font-size: 11px; color: #71717a; border-top: 1px solid #e4e4e7; text-align: center;">
-      Smart Contact Manager • Automated CRM Follow-up System
+      Dispatched via SCM Mail Service &bull; scm.project.12@gmail.com
     </div>
   </div>
 </body>
 </html>`;
+      } else {
+        // ── Template B: For Person 2 (The Contact / Meeting Partner) ──
+        subject = isUrgent
+          ? `⚡ Friendly Reminder: Upcoming Meeting with ${organizer.name}`
+          : `🗓️ Meeting Confirmation: Scheduled with ${organizer.name}`;
 
-  try {
-    await mailTransporter.sendMail({
-      from: `"Smart Contact Manager Follow-Ups" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
-      to: targetEmail,
-      cc: ccEmail,
-      subject,
-      text: textBody,
-      html: htmlBody
-    });
-  } catch (err) {
-    console.warn("[FOLLOWUP_CONFIRM_MAIL_WARN]", err.message);
-  }
-}
+        textBody = `${isUrgent ? "UPCOMING MEETING REMINDER" : "MEETING CONFIRMATION"}
 
-/**
- * Trigger 2: Urgent Reminder Email (Less Than 1 Hour Away)
- */
-export async function dispatchUrgentFollowUpEmail(contact) {
-  if (!contact) return;
-  const targetEmail = contact.userEmail || process.env.SMTP_USER || "scm.project.12@gmail.com";
-  const ccEmail = contact.email && contact.email.includes("@") && contact.email !== targetEmail ? contact.email : undefined;
+Hi ${contact.name},
 
-  const meetingTimeFormatted = formatMeetingDateKolkata(contact.followUpDate);
-  const agenda = contact.followUpReason ? contact.followUpReason.trim() : "Scheduled meeting review";
-  const cleanDigits = String(contact.phoneNumber || "").replace(/\D/g, "");
-  const subject = `⚡ Starting in less than an hour: Follow-Up with ${contact.name}`;
-
-  const textBody = `URGENT MEETING REMINDER - STARTING IN LESS THAN 1 HOUR
-
-Hello,
-
-Your scheduled follow-up meeting with ${contact.name} is starting in less than one hour!
+${isUrgent ? `This is a friendly reminder that your upcoming meeting with ${organizer.name} is starting in less than an hour.` : `This is a confirmation for your upcoming meeting with ${organizer.name}.`}
 
 --------------------------------------------------
-MEETING ALERT DETAILS:
+CONFIRMED MEETING DETAILS:
 --------------------------------------------------
-• Contact: ${contact.name} (${contact.phoneNumber})
+• With Whom: ${organizer.name} (${organizer.email})
 • Scheduled Time: ${meetingTimeFormatted}
 • Purpose / Agenda: ${agenda}
+• Organizer Contact: ${organizerPhone}
 --------------------------------------------------
 
-1-CLICK DIRECT ACTIONS:
-• Call Now: tel:${contact.phoneNumber}
-• Open in WhatsApp: https://wa.me/${cleanDigits}
+If you have any questions or need to reschedule, please reply directly to this email (${organizer.email}).
 
-Please prepare any discussion points or materials beforehand.
+Best regards,
+${organizer.name} & Smart Contact Manager`;
 
-Smart Contact Manager CRM Notification System`;
-
-  const htmlBody = `
+        htmlBody = `
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8">
-  <title>${escapeXml(subject)}</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #fef2f2; margin: 0; padding: 24px; color: #18181b;">
-  <div style="max-width: 580px; margin: 0 auto; background: #ffffff; border: 2px solid #ef4444; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08);">
-    <div style="background: #dc2626; padding: 20px 24px; color: #ffffff;">
+<head><meta charset="utf-8"><title>${escapeXml(subject)}</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
+  <div style="max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="background: #059669; padding: 20px 24px; color: #ffffff;">
       <h2 style="margin: 0; font-size: 18px; font-weight: 700;">
-        ⚡ Starting in Less Than an Hour!
+        ${isUrgent ? "⚡ Friendly Reminder: Meeting Soon" : "🗓️ Meeting Confirmation"}
       </h2>
-      <p style="margin: 6px 0 0; font-size: 12px; color: #fee2e2;">Urgent Meeting Reminder • Smart Contact Manager</p>
+      <p style="margin: 6px 0 0; font-size: 12px; color: #d1fae5;">Scheduled with ${escapeXml(organizer.name)}</p>
     </div>
     <div style="padding: 24px;">
-      <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #18181b;">
-        Your scheduled meeting with <strong>${escapeXml(contact.name)}</strong> is coming up soon.
+      <p style="margin: 0 0 16px; font-size: 14px; line-height: 1.5; color: #3f3f46;">
+        Hi <strong>${escapeXml(contact.name)}</strong>, ${isUrgent ? "this is a friendly reminder that your upcoming meeting is starting in less than an hour." : "this is a confirmation for your upcoming scheduled meeting."}
       </p>
 
       <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 18px; margin-bottom: 20px;">
         <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <tr>
-            <td style="padding: 6px 0; color: #374151; width: 34%;">👤 <strong>Contact:</strong></td>
-            <td style="padding: 6px 0; color: #111827; font-weight: 600;">${escapeXml(contact.name)} (${escapeXml(contact.phoneNumber)})</td>
+            <td style="padding: 6px 0; color: #374151; width: 34%;">👤 <strong>With Whom:</strong></td>
+            <td style="padding: 6px 0; color: #111827;"><strong>${escapeXml(organizer.name)}</strong> (${escapeXml(organizer.email)})</td>
           </tr>
           <tr>
             <td style="padding: 6px 0; color: #374151;">⏰ <strong>Scheduled Time:</strong></td>
-            <td style="padding: 6px 0; color: #059669; font-weight: 800; font-size: 15px;">${escapeXml(meetingTimeFormatted)}</td>
+            <td style="padding: 6px 0; color: #059669; font-weight: 700; font-size: 14px;">${escapeXml(meetingTimeFormatted)}</td>
           </tr>
           <tr>
-            <td style="padding: 6px 0; color: #374151;">📝 <strong>Agenda / Purpose:</strong></td>
-            <td style="padding: 6px 0; color: #1f2937; font-style: italic;">"${escapeXml(agenda)}"</td>
+            <td style="padding: 6px 0; color: #374151;">📝 <strong>Purpose / Why:</strong></td>
+            <td style="padding: 6px 0; color: #111827; font-style: italic;">"${escapeXml(agenda)}"</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #374151;">📞 <strong>Organizer Contact:</strong></td>
+            <td style="padding: 6px 0; color: #111827;">${escapeXml(organizerPhone)}</td>
           </tr>
         </table>
       </div>
 
-      <div style="display: flex; gap: 12px; margin-top: 20px;">
-        <a href="tel:${escapeXml(contact.phoneNumber)}" style="display: inline-block; background: #059669; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-size: 13px; font-weight: 700;">📞 Call ${escapeXml(contact.name)} Now</a>
-        <a href="https://wa.me/${cleanDigits}" style="display: inline-block; background: #25D366; color: #ffffff; text-decoration: none; padding: 12px 18px; border-radius: 6px; font-size: 13px; font-weight: 700; margin-left: 8px;">💬 Chat on WhatsApp</a>
-      </div>
+      <p style="font-size: 12px; color: #6b7280; line-height: 1.5;">
+        Need to update or discuss anything beforehand? Simply reply directly to this email at <a href="mailto:${escapeXml(organizer.email)}" style="color: #059669; font-weight: 600;">${escapeXml(organizer.email)}</a>.
+      </p>
     </div>
     <div style="background: #f4f4f5; padding: 12px 24px; font-size: 11px; color: #71717a; border-top: 1px solid #e4e4e7; text-align: center;">
-      Smart Contact Manager • High-Priority Meeting Alert System
+      Dispatched via SCM Mail Service &bull; scm.project.12@gmail.com
     </div>
   </div>
 </body>
 </html>`;
+      }
 
-  try {
-    await mailTransporter.sendMail({
-      from: `"Smart Contact Manager Urgent Alerts" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
-      to: targetEmail,
-      cc: ccEmail,
-      subject,
-      text: textBody,
-      html: htmlBody
-    });
-  } catch (err) {
-    console.warn("[FOLLOWUP_URGENT_MAIL_WARN]", err.message);
-  }
+      return mailTransporter.sendMail({
+        from: `"Smart Contact Manager Reminders" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+        to,
+        subject,
+        text: textBody,
+        html: htmlBody
+      });
+    })
+  );
+}
+
+export async function dispatchFollowUpConfirmationEmail(contact, recipientEmail) {
+  const user = resolveOrganizerUser(recipientEmail, contact);
+  return dispatchFollowUpToBothParties({ user, contact, isUrgent: false });
+}
+
+export async function dispatchUrgentFollowUpEmail(contact) {
+  const user = resolveOrganizerUser(contact?.userEmail, contact);
+  return dispatchFollowUpToBothParties({ user, contact, isUrgent: true });
 }
 
 function isGoogleOAuthConfigured() {
