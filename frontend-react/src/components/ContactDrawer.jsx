@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   X,
   Star,
@@ -25,7 +25,9 @@ import {
   Sparkles,
   Download,
   Calendar,
-  XCircle
+  XCircle,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import {
   formatPhoneWithFlag,
@@ -55,16 +57,397 @@ export function getTagBadgeStyle(tag) {
   }
 }
 
-function toDatetimeLocalValue(dateString) {
-  if (!dateString) return "";
+export function formatFriendlyDateTime(dateValue) {
+  if (!dateValue) return "";
   try {
-    const d = new Date(dateString);
+    const d = new Date(dateValue);
     if (isNaN(d.getTime())) return "";
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const datePart = d.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric"
+    });
+    const timePart = d.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+    return `${datePart} at ${timePart} (IST)`;
   } catch (_e) {
     return "";
   }
+}
+
+export function MiniCalendarPicker({ value, onChange }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  const parsedDate = React.useMemo(() => {
+    if (!value) return null;
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }, [value]);
+
+  const [viewDate, setViewDate] = useState(() => parsedDate || new Date());
+
+  const [selectedHour, setSelectedHour] = useState(() => {
+    if (!parsedDate) return "10";
+    let h = parsedDate.getHours() % 12;
+    return String(h === 0 ? 12 : h).padStart(2, "0");
+  });
+
+  const [selectedMinute, setSelectedMinute] = useState(() => {
+    if (!parsedDate) return "00";
+    return String(parsedDate.getMinutes()).padStart(2, "0");
+  });
+
+  const [selectedAmPm, setSelectedAmPm] = useState(() => {
+    if (!parsedDate) return "AM";
+    return parsedDate.getHours() >= 12 ? "PM" : "AM";
+  });
+
+  useEffect(() => {
+    if (parsedDate) {
+      setViewDate(parsedDate);
+      let h = parsedDate.getHours() % 12;
+      setSelectedHour(String(h === 0 ? 12 : h).padStart(2, "0"));
+      setSelectedMinute(String(parsedDate.getMinutes()).padStart(2, "0"));
+      setSelectedAmPm(parsedDate.getHours() >= 12 ? "PM" : "AM");
+    }
+  }, [value]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    function handleClickOutside(event) {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const viewYear = viewDate.getFullYear();
+  const viewMonth = viewDate.getMonth();
+
+  const monthName = viewDate.toLocaleString("en-US", { month: "long" });
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const daysInPrevMonth = new Date(viewYear, viewMonth, 0).getDate();
+  const firstDayIndex = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const prevMonth = () => {
+    setViewDate(new Date(viewYear, viewMonth - 1, 1));
+  };
+
+  const nextMonth = () => {
+    setViewDate(new Date(viewYear, viewMonth + 1, 1));
+  };
+
+  const emitDateTime = (targetYear, targetMonth, targetDay, hourStr = selectedHour, minStr = selectedMinute, ampmStr = selectedAmPm) => {
+    let hour = parseInt(hourStr, 10);
+    if (ampmStr === "PM" && hour < 12) hour += 12;
+    if (ampmStr === "AM" && hour === 12) hour = 0;
+    const minute = parseInt(minStr, 10);
+
+    const targetDate = new Date(targetYear, targetMonth, targetDay, hour, minute, 0, 0);
+    onChange(targetDate.toISOString());
+  };
+
+  const handleSelectDay = (day) => {
+    emitDateTime(viewYear, viewMonth, day);
+  };
+
+  const handleApplyPreset = (daysOffset, targetHour24, targetMinute = 0) => {
+    const d = new Date();
+    d.setDate(d.getDate() + daysOffset);
+    d.setHours(targetHour24, targetMinute, 0, 0);
+
+    const ampm = targetHour24 >= 12 ? "PM" : "AM";
+    let h12 = targetHour24 % 12;
+    if (h12 === 0) h12 = 12;
+
+    setSelectedHour(String(h12).padStart(2, "0"));
+    setSelectedMinute(String(targetMinute).padStart(2, "0"));
+    setSelectedAmPm(ampm);
+    setViewDate(d);
+    onChange(d.toISOString());
+  };
+
+  const handleNextMonday = () => {
+    const d = new Date();
+    const currentDay = d.getDay();
+    const daysUntilNextMon = ((1 + 7 - currentDay) % 7) || 7;
+    d.setDate(d.getDate() + daysUntilNextMon);
+    d.setHours(11, 0, 0, 0);
+
+    setSelectedHour("11");
+    setSelectedMinute("00");
+    setSelectedAmPm("AM");
+    setViewDate(d);
+    onChange(d.toISOString());
+  };
+
+  const handleTimeChange = (newHour, newMin, newAmPm) => {
+    setSelectedHour(newHour);
+    setSelectedMinute(newMin);
+    setSelectedAmPm(newAmPm);
+
+    const baseDate = parsedDate || new Date();
+    emitDateTime(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate(), newHour, newMin, newAmPm);
+  };
+
+  const formattedDisplay = formatFriendlyDateTime(value);
+
+  const daysCells = [];
+
+  for (let i = firstDayIndex - 1; i >= 0; i--) {
+    daysCells.push({
+      day: daysInPrevMonth - i,
+      isCurrentMonth: false,
+      year: viewYear,
+      month: viewMonth - 1
+    });
+  }
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    daysCells.push({
+      day: d,
+      isCurrentMonth: true,
+      year: viewYear,
+      month: viewMonth
+    });
+  }
+
+  const remainingCells = (7 - (daysCells.length % 7)) % 7;
+  for (let d = 1; d <= remainingCells; d++) {
+    daysCells.push({
+      day: d,
+      isCurrentMonth: false,
+      year: viewYear,
+      month: viewMonth + 1
+    });
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      {/* Clickable Formatted Trigger */}
+      <div
+        onClick={() => setIsOpen((prev) => !prev)}
+        className={`w-full flex items-center justify-between rounded-md border bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs cursor-pointer select-none transition-all ${
+          isOpen
+            ? "border-amber-500 ring-2 ring-amber-500/20 shadow-xs"
+            : "border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600"
+        }`}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Calendar className="w-4 h-4 text-amber-500 shrink-0" />
+          <span
+            className={`truncate font-mono ${
+              formattedDisplay
+                ? "text-zinc-900 dark:text-zinc-100 font-medium"
+                : "text-zinc-400 dark:text-zinc-500"
+            }`}
+          >
+            {formattedDisplay || "Select meeting date & time..."}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0 ml-1">
+          {value && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange("");
+              }}
+              title="Clear date"
+              className="p-0.5 rounded text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <span className="text-[10px] text-zinc-400">▾</span>
+        </div>
+      </div>
+
+      {/* Popover Floating Widget */}
+      {isOpen && (
+        <div className="absolute left-0 mt-1.5 w-[310px] rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-2xl p-3 z-50 animate-in fade-in slide-in-from-top-1 text-xs">
+          {/* 1. Quick Presets Bar */}
+          <div className="pb-2.5 mb-2.5 border-b border-zinc-100 dark:border-zinc-800">
+            <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">
+              Quick Shortcuts
+            </div>
+            <div className="flex flex-wrap gap-1">
+              <button
+                type="button"
+                onClick={() => handleApplyPreset(1, 10, 0)}
+                className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900 transition-colors"
+              >
+                ⚡ Tomorrow 10:00 AM
+              </button>
+              <button
+                type="button"
+                onClick={() => handleApplyPreset(2, 14, 0)}
+                className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+              >
+                ⚡ In 2 Days 02:00 PM
+              </button>
+              <button
+                type="button"
+                onClick={handleNextMonday}
+                className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+              >
+                ⚡ Next Mon 11:00 AM
+              </button>
+            </div>
+          </div>
+
+          {/* 2. Month & Year Navigation */}
+          <div className="flex items-center justify-between mb-2 px-1">
+            <span className="font-semibold text-zinc-900 dark:text-zinc-100 text-xs">
+              {monthName} {viewYear}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={prevMonth}
+                title="Previous month"
+                className="p-1 rounded text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={nextMonth}
+                title="Next month"
+                className="p-1 rounded text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* 3. Days of Week Header */}
+          <div className="grid grid-cols-7 gap-1 text-center font-mono text-[10px] text-zinc-400 mb-1">
+            {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
+              <span key={d} className="py-0.5">
+                {d}
+              </span>
+            ))}
+          </div>
+
+          {/* 4. Days Grid */}
+          <div className="grid grid-cols-7 gap-1 text-center mb-3">
+            {daysCells.map((cell, idx) => {
+              const cellDate = new Date(cell.year, cell.month, cell.day);
+              cellDate.setHours(0, 0, 0, 0);
+
+              const isToday = cellDate.getTime() === today.getTime();
+              const isSelected =
+                parsedDate &&
+                parsedDate.getFullYear() === cell.year &&
+                parsedDate.getMonth() === cell.month &&
+                parsedDate.getDate() === cell.day;
+              const isPast = cellDate.getTime() < today.getTime();
+
+              return (
+                <button
+                  key={`${cell.year}-${cell.month}-${cell.day}-${idx}`}
+                  type="button"
+                  disabled={!cell.isCurrentMonth}
+                  onClick={() => handleSelectDay(cell.day)}
+                  className={`h-7 w-7 mx-auto flex items-center justify-center rounded-md font-mono text-xs transition-colors ${
+                    !cell.isCurrentMonth
+                      ? "opacity-25 pointer-events-none text-zinc-400"
+                      : isSelected
+                      ? "bg-amber-600 dark:bg-amber-500 text-white font-bold shadow-xs"
+                      : isToday
+                      ? "border border-amber-500/80 text-amber-600 dark:text-amber-400 font-bold bg-amber-50/50 dark:bg-amber-950/30"
+                      : isPast
+                      ? "text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                      : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  {cell.day}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 5. Built-in Time Picker Row */}
+          <div className="pt-2.5 border-t border-zinc-100 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-1.5">
+              <div className="flex items-center gap-1 font-mono text-xs">
+                <Clock className="w-3.5 h-3.5 text-zinc-400 mr-0.5 shrink-0" />
+                <select
+                  value={selectedHour}
+                  onChange={(e) => handleTimeChange(e.target.value, selectedMinute, selectedAmPm)}
+                  className="rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-1 py-1 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-amber-500"
+                >
+                  {["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map(
+                    (h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    )
+                  )}
+                </select>
+
+                <span>:</span>
+
+                <select
+                  value={selectedMinute}
+                  onChange={(e) => handleTimeChange(selectedHour, e.target.value, selectedAmPm)}
+                  className="rounded border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-1 py-1 text-xs text-zinc-900 dark:text-zinc-100 focus:outline-none focus:border-amber-500"
+                >
+                  {["00", "15", "30", "45"].map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleTimeChange(selectedHour, selectedMinute, selectedAmPm === "AM" ? "PM" : "AM")
+                  }
+                  className="px-1.5 py-1 rounded border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 font-semibold text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                >
+                  {selectedAmPm}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium shadow-xs transition-colors shrink-0"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function ContactDrawer({
@@ -96,7 +479,7 @@ export default function ContactDrawer({
 
   useEffect(() => {
     if (contact) {
-      setFollowUpDateInput(toDatetimeLocalValue(contact.followUpDate));
+      setFollowUpDateInput(contact.followUpDate || "");
       setFollowUpReasonInput(contact.followUpReason || "");
     } else {
       setFollowUpDateInput("");
@@ -776,11 +1159,9 @@ export default function ContactDrawer({
                   <label className="block text-[10px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400 mb-1">
                     Meeting Date & Time (IST)
                   </label>
-                  <input
-                    type="datetime-local"
+                  <MiniCalendarPicker
                     value={followUpDateInput}
-                    onChange={(e) => setFollowUpDateInput(e.target.value)}
-                    className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 focus:border-amber-400 dark:focus:border-amber-600 focus:outline-none font-mono"
+                    onChange={(val) => setFollowUpDateInput(val)}
                   />
                 </div>
 
