@@ -1,8 +1,9 @@
 import axios from "axios";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+const API_BASE_URL =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE_URL) || "http://localhost:8080";
 
-let inMemoryToken = localStorage.getItem("scm_jwt_token") || null;
+let inMemoryToken = typeof localStorage !== "undefined" ? localStorage.getItem("scm_jwt_token") : null;
 
 export function setAuthToken(token, user = null) {
   inMemoryToken = token;
@@ -282,6 +283,207 @@ export function getFollowUpStatus(followUpDate) {
   } catch (_e) {
     return null;
   }
+}
+
+/**
+ * Mask sensitive personal phone numbers for demo mode and safe exports
+ * Keeps country code/prefix and replaces the last 5 digits with asterisks
+ */
+export function maskPhoneNumber(phone) {
+  if (!phone || !String(phone).trim()) return "—";
+  let raw = String(phone).trim();
+  if (!raw.startsWith("+") && raw.startsWith("91") && raw.length >= 12) {
+    raw = "+91 " + raw.slice(2);
+  } else if (!raw.startsWith("+") && raw.startsWith("1") && raw.length === 11) {
+    raw = "+1 " + raw.slice(1);
+  }
+  const phoneInfo = formatPhoneWithFlag(raw);
+  const formatted = phoneInfo.formatted !== "—" ? phoneInfo.formatted : raw;
+
+  let count = 0;
+  const chars = formatted.split("");
+  for (let i = chars.length - 1; i >= 0; i--) {
+    if (/\d/.test(chars[i])) {
+      chars[i] = "*";
+      count++;
+      if (count >= 5) break;
+    }
+  }
+  return chars.join("");
+}
+
+/**
+ * Mask sensitive email addresses for demo mode and safe exports
+ * Masks student roll numbers (student****@domain) and personal emails (khat****@domain)
+ */
+export function maskEmailAddress(email) {
+  if (!email || !String(email).trim()) return "—";
+  const str = String(email).trim();
+  const atIndex = str.indexOf("@");
+  if (atIndex === -1) return str;
+  const local = str.slice(0, atIndex);
+  const domain = str.slice(atIndex + 1);
+
+  if (/^\d+$/.test(local) || /^\d{6,}/.test(local)) {
+    return `student****@${domain}`;
+  }
+
+  if (local.length <= 4) {
+    return `${local.slice(0, 1)}****@${domain}`;
+  }
+  return `${local.slice(0, 4)}****@${domain}`;
+}
+
+/**
+ * Return a sanitized copy of a contact with masked phone and email
+ */
+export function maskSensitiveData(contact) {
+  if (!contact) return contact;
+  return {
+    ...contact,
+    phoneNumber: maskPhoneNumber(contact.phoneNumber),
+    email: maskEmailAddress(contact.email)
+  };
+}
+
+/**
+ * Export contacts list to CSV with optional PII masking
+ */
+export function exportContactsToCsv(contactsList, isMasked = false) {
+  const headers = ["ID", "Name", "Email", "Phone", "Tag", "Company", "Role", "Location"];
+  const rows = (contactsList || []).map((c) => {
+    const email = isMasked ? maskEmailAddress(c.email) : (c.email || "");
+    const phone = isMasked ? maskPhoneNumber(c.phoneNumber) : (c.phoneNumber || "");
+    return [
+      c.id,
+      `"${(c.name || "").replace(/"/g, '""')}"`,
+      `"${email.replace(/"/g, '""')}"`,
+      `"${phone.replace(/"/g, '""')}"`,
+      inferContactTag(c),
+      `"${(c.company || "").replace(/"/g, '""')}"`,
+      `"${(c.description || "").replace(/"/g, '""')}"`,
+      `"${(c.address || "").replace(/"/g, '""')}"`
+    ];
+  });
+  const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const prefix = isMasked ? "contacts-demo-masked" : "contacts";
+  a.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Export contacts list to Printable PDF view with optional PII masking
+ */
+export function exportContactsToPdf(contactsList, isMasked = false) {
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) {
+    if (typeof alert !== "undefined") {
+      alert("Please allow popups to generate and print PDF.");
+    }
+    return;
+  }
+
+  const title = isMasked
+    ? "Smart Contact Manager — Demo Safe Directory (PII Masked)"
+    : "Smart Contact Manager — Contact Directory";
+  const dateStr = new Date().toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+
+  const escapeHtml = (str) =>
+    String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  const rowsHtml = (contactsList || [])
+    .map((c, idx) => {
+      const email = isMasked ? maskEmailAddress(c.email) : (c.email || "—");
+      const phone = isMasked ? maskPhoneNumber(c.phoneNumber) : (c.phoneNumber || "—");
+      const tag = inferContactTag(c);
+      return `
+        <tr style="border-bottom: 1px solid #e4e4e7; ${idx % 2 === 1 ? "background-color: #fafafa;" : ""}">
+          <td style="padding: 8px 12px; font-weight: 600; color: #18181b;">${escapeHtml(c.name || "Unnamed")}</td>
+          <td style="padding: 8px 12px; color: #52525b; font-family: monospace;">${escapeHtml(phone)}</td>
+          <td style="padding: 8px 12px; color: #52525b; font-family: monospace;">${escapeHtml(email)}</td>
+          <td style="padding: 8px 12px; color: #27272a;">${escapeHtml(c.company || "—")}</td>
+          <td style="padding: 8px 12px; color: #52525b;">${escapeHtml(c.description || "—")}</td>
+          <td style="padding: 8px 12px;"><span style="display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 500; background: #f4f4f5; border: 1px solid #e4e4e7; color: #3f3f46;">${escapeHtml(tag)}</span></td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>${title}</title>
+        <style>
+          @page { size: landscape; margin: 15mm; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 24px; color: #18181b; }
+          .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 2px solid #e4e4e7; padding-bottom: 14px; }
+          .title { font-size: 20px; font-weight: 700; margin: 0; color: #09090b; }
+          .badge { display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; background: ${isMasked ? "#ecfdf5; color: #065f46; border: 1px solid #a7f3d0;" : "#f4f4f5; color: #52525b; border: 1px solid #e4e4e7;"}; }
+          .meta { font-size: 12px; color: #71717a; text-align: right; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; margin-top: 10px; }
+          th { padding: 10px 12px; background-color: #f4f4f5; color: #3f3f46; font-weight: 600; border-bottom: 2px solid #e4e4e7; }
+          @media print {
+            body { padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <h1 class="title">${title}</h1>
+            <div class="badge">${isMasked ? "🛡️ Privacy Protected • PII Masked for Demo/Sharing" : "📋 Standard Contact Directory"}</div>
+          </div>
+          <div class="meta">
+            <div><strong>Generated:</strong> ${dateStr}</div>
+            <div><strong>Total Records:</strong> ${(contactsList || []).length}</div>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Phone</th>
+              <th>Email</th>
+              <th>Company</th>
+              <th>Role</th>
+              <th>Tag</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 300);
+          };
+        </script>
+      </body>
+    </html>
+  `;
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
 }
 
 /**

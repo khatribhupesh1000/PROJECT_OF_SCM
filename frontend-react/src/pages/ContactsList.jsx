@@ -14,7 +14,11 @@ import {
   ChevronRight,
   SlidersHorizontal,
   Clock,
-  Merge
+  Merge,
+  Shield,
+  ShieldCheck,
+  FileText,
+  ChevronDown
 } from "lucide-react";
 import ContactModal from "../components/ContactModal.jsx";
 import ContactDrawer, { getTagBadgeStyle } from "../components/ContactDrawer.jsx";
@@ -28,7 +32,11 @@ import {
   inferContactTag,
   formatShortDate,
   downloadVCard,
-  getFollowUpStatus
+  getFollowUpStatus,
+  maskPhoneNumber,
+  maskEmailAddress,
+  exportContactsToCsv,
+  exportContactsToPdf
 } from "../services/api.js";
 
 const SEGMENT_TABS = [
@@ -67,8 +75,25 @@ export default function ContactsList({
   const [mergingDuplicates, setMergingDuplicates] = useState(false);
   const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
 
+  // Privacy Safe Demo Mode & Export state
+  const [demoMaskEnabled, setDemoMaskEnabled] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [maskExportSetting, setMaskExportSetting] = useState(false);
+  const exportMenuRef = useRef(null);
+
   const searchInputRef = useRef(null);
   const fetchSeqRef = useRef(0);
+
+  // Close export dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) {
+        setExportMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   // Scan loaded contacts for duplicate normalized phone numbers or emails
   const duplicatePairs = React.useMemo(() => {
@@ -430,31 +455,24 @@ export default function ContactsList({
     setTimeout(() => setCopiedId(null), 1600);
   };
 
-  const handleExportCsv = () => {
-    const headers = ["ID", "Name", "Email", "Phone", "Tag", "Company", "Role", "Location"];
-    const rows = contacts.map((c) => [
-      c.id,
-      `"${(c.name || "").replace(/"/g, '""')}"`,
-      c.email || "",
-      c.phoneNumber || "",
-      inferContactTag(c),
-      `"${(c.company || "").replace(/"/g, '""')}"`,
-      `"${(c.description || "").replace(/"/g, '""')}"`,
-      `"${(c.address || "").replace(/"/g, '""')}"`
-    ]);
-    const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `contacts-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    onNotify({
-      variant: "success",
-      title: "Directory exported",
-      detail: `Downloaded ${contacts.length} contacts as CSV.`
-    });
+  const handleExport = (format = "csv", forceMask = null) => {
+    const isMasked = forceMask !== null ? forceMask : (maskExportSetting || demoMaskEnabled);
+    if (format === "csv") {
+      exportContactsToCsv(contacts, isMasked);
+      onNotify({
+        variant: "success",
+        title: isMasked ? "Safe Demo CSV Exported" : "Directory Exported",
+        detail: `Downloaded ${contacts.length} contacts ${isMasked ? "with masked PII" : "as CSV"}.`
+      });
+    } else if (format === "pdf") {
+      exportContactsToPdf(contacts, isMasked);
+      onNotify({
+        variant: "success",
+        title: isMasked ? "Safe Demo PDF Exported" : "Directory PDF Opened",
+        detail: `Opened printable directory for ${contacts.length} contacts ${isMasked ? "(PII Masked)" : ""}.`
+      });
+    }
+    setExportMenuOpen(false);
   };
 
   const handleNextPage = () => {
@@ -474,24 +492,121 @@ export default function ContactsList({
     <div className="max-w-[1400px] mx-auto px-4 sm:px-6 py-5">
       {/* Top Header & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4">
-        <div className="flex items-baseline gap-2.5">
+        <div className="flex items-baseline gap-2.5 flex-wrap">
           <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-zinc-100">
             Contacts
           </h1>
           <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
             {totalCount} {totalCount === 1 ? "record" : "records"}
           </span>
+          {demoMaskEnabled && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 animate-in fade-in">
+              <ShieldCheck className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+              <span>Demo Mode Active (PII Masked)</span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Privacy Safe Demo Mode Toggle */}
           <button
             type="button"
-            onClick={handleExportCsv}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
+            onClick={() => {
+              const nextState = !demoMaskEnabled;
+              setDemoMaskEnabled(nextState);
+              onNotify({
+                variant: "info",
+                title: nextState ? "Demo Mode Activated" : "Demo Mode Deactivated",
+                detail: nextState
+                  ? "Sensitive phone numbers & emails are masked on-screen for safe presentation."
+                  : "Showing original contact phone numbers and emails."
+              });
+            }}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98] ${
+              demoMaskEnabled
+                ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/20"
+                : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/80"
+            }`}
+            title="Toggle Privacy Mask for Live Presentation / Screen Share"
           >
-            <Download className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Export CSV</span>
+            {demoMaskEnabled ? (
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            ) : (
+              <Shield className="w-3.5 h-3.5 text-zinc-400" />
+            )}
+            <span>{demoMaskEnabled ? "Demo Mode (Masked)" : "Demo Mode"}</span>
           </button>
+
+          {/* Export Dropdown with Safe Demo Options */}
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              type="button"
+              onClick={() => setExportMenuOpen((prev) => !prev)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
+            >
+              <Download className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Export</span>
+              <ChevronDown className="w-3 h-3 text-zinc-400 ml-0.5" />
+            </button>
+
+            {exportMenuOpen && (
+              <div className="absolute right-0 mt-1.5 w-64 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg py-1.5 z-30 animate-in fade-in slide-in-from-top-1 text-xs">
+                <div className="px-3 py-1.5 font-semibold text-zinc-500 dark:text-zinc-400 text-[11px] uppercase tracking-wider">
+                  Export Directory
+                </div>
+                
+                <button
+                  type="button"
+                  onClick={() => handleExport("csv", false)}
+                  className="w-full text-left px-3 py-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5 text-zinc-400" />
+                  <div>
+                    <div className="font-medium">Export CSV (Standard)</div>
+                    <div className="text-[10px] text-zinc-400">All original contact details</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExport("csv", true)}
+                  className="w-full text-left px-3 py-2 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 flex items-center gap-2 transition-colors"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <div>
+                    <div className="font-medium">Export Safe Demo CSV</div>
+                    <div className="text-[10px] text-zinc-400">Mask phone numbers & emails</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleExport("pdf", demoMaskEnabled || maskExportSetting)}
+                  className="w-full text-left px-3 py-2 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 flex items-center gap-2 transition-colors border-b border-zinc-100 dark:border-zinc-800"
+                >
+                  <FileText className="w-3.5 h-3.5 text-zinc-400" />
+                  <div>
+                    <div className="font-medium">Export PDF (Print / Save)</div>
+                    <div className="text-[10px] text-zinc-400">
+                      {demoMaskEnabled || maskExportSetting ? "Safe masked format" : "Standard printable table"}
+                    </div>
+                  </div>
+                </button>
+
+                <div className="px-3 py-2 bg-zinc-50 dark:bg-zinc-800/50 flex items-center justify-between gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer select-none text-[11px] text-zinc-600 dark:text-zinc-400">
+                    <input
+                      type="checkbox"
+                      checked={maskExportSetting}
+                      onChange={(e) => setMaskExportSetting(e.target.checked)}
+                      className="rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500 h-3.5 w-3.5"
+                    />
+                    <span>Mask sensitive PII by default</span>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
 
           <button
             type="button"
@@ -761,7 +876,7 @@ export default function ContactsList({
                               )}
                             </div>
                             <div className="text-[11px] text-zinc-400 md:hidden truncate">
-                              {contact.description || contact.email}
+                              {contact.description || (demoMaskEnabled ? maskEmailAddress(contact.email) : contact.email)}
                             </div>
                           </div>
                         </div>
@@ -788,12 +903,12 @@ export default function ContactsList({
                       {/* International Phone with Flag */}
                       <td className="py-2.5 px-3 font-mono text-xs text-zinc-700 dark:text-zinc-300 whitespace-nowrap">
                         <span className="mr-1.5">{phoneInfo.flag}</span>
-                        <span>{phoneInfo.formatted}</span>
+                        <span>{demoMaskEnabled ? maskPhoneNumber(contact.phoneNumber) : phoneInfo.formatted}</span>
                       </td>
 
                       {/* Email */}
                       <td className="py-2.5 px-3 hidden lg:table-cell font-mono text-xs text-zinc-500 dark:text-zinc-400 max-w-[220px] truncate">
-                        {contact.email}
+                        {demoMaskEnabled ? maskEmailAddress(contact.email) : (contact.email || "—")}
                       </td>
 
                       {/* Updated Date + Hover Quick Action Bar */}
