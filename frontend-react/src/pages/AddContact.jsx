@@ -206,7 +206,7 @@ export default function AddContact({ onNotify }) {
                       handleFieldBlur("localPhone");
                     }
                   }}
-                  placeholder="9876543210"
+                  placeholder=""
                   className="w-full rounded-r-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-950 px-3 py-1.5 text-xs font-mono text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-zinc-400 dark:focus:border-zinc-600 focus:outline-none focus:ring-2 focus:ring-zinc-400/30"
                 />
               </div>
