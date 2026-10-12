@@ -326,13 +326,21 @@ export default function ContactsList({
       if (inspectedContact?.id === contact.id) {
         setInspectedContact(updated);
       }
-      onNotify({
-        variant: "success",
-        title: payload.followUpDate ? "Follow-up scheduled" : "Follow-up cleared",
-        detail: payload.followUpDate
-          ? "Follow-up scheduled! Confirmation email sent via SCM Mail."
-          : `Reminder removed for ${updated.name}`
-      });
+      if (payload.clearFollowUp) {
+        onNotify({
+          variant: "success",
+          title: "Follow-up cancelled",
+          detail: "Cancellation notice dispatched to both participants."
+        });
+      } else {
+        onNotify({
+          variant: "success",
+          title: payload.followUpDate ? "Follow-up scheduled" : "Follow-up cleared",
+          detail: payload.followUpDate
+            ? "Follow-up scheduled! Confirmation email sent via SCM Mail."
+            : `Reminder removed for ${updated.name}`
+        });
+      }
     } catch (err) {
       onNotify({ variant: "error", ...parseRfc7807Error(err) });
     }

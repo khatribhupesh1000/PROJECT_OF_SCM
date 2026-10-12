@@ -24,7 +24,8 @@ import {
   AlertCircle,
   Sparkles,
   Download,
-  Calendar
+  Calendar,
+  XCircle
 } from "lucide-react";
 import {
   formatPhoneWithFlag,
@@ -89,6 +90,9 @@ export default function ContactDrawer({
   const [followUpDateInput, setFollowUpDateInput] = useState("");
   const [followUpReasonInput, setFollowUpReasonInput] = useState("");
   const [savingFollowUp, setSavingFollowUp] = useState(false);
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelReasonInput, setCancelReasonInput] = useState("");
+  const [cancellingFollowUp, setCancellingFollowUp] = useState(false);
 
   useEffect(() => {
     if (contact) {
@@ -146,31 +150,55 @@ export default function ContactDrawer({
     }
   };
 
-  const handleClearFollowUp = async () => {
-    setSavingFollowUp(true);
+  const handleOpenCancelModal = () => {
+    setCancelReasonInput("");
+    setCancelModalOpen(true);
+  };
+
+  const handleConfirmCancelFollowUp = async () => {
+    if (!cancelReasonInput.trim()) return;
+    setCancellingFollowUp(true);
     try {
+      let userEmail = null;
+      try {
+        const storedProfile = localStorage.getItem("scm_user_profile");
+        if (storedProfile) {
+          const parsed = JSON.parse(storedProfile);
+          if (parsed?.email) userEmail = parsed.email;
+        }
+      } catch (_) {}
+
+      const originalDate = contact.followUpDate;
+      const cancelReason = cancelReasonInput.trim();
       const payload = {
+        clearFollowUp: true,
+        cancelReason,
+        originalFollowUpDate: originalDate,
         followUpDate: null,
         followUpReason: null,
         followUpFixedAt: null,
-        followUpUrgentSent: null
+        followUpUrgentSent: false,
+        userEmail: userEmail || undefined
       };
+
       setFollowUpDateInput("");
       setFollowUpReasonInput("");
+      setCancelModalOpen(false);
+
       if (onUpdateFollowUpDate) {
         await onUpdateFollowUpDate(contact, payload);
       } else {
         await contactApi.patch(contact.id, payload);
         onNotify?.({
           variant: "success",
-          title: "Follow-up cleared",
-          detail: "Follow-up removed."
+          title: "Follow-up cancelled",
+          detail: "Cancellation notice dispatched to both participants."
         });
       }
     } catch (err) {
       onNotify?.({ variant: "error", ...parseRfc7807Error(err) });
     } finally {
-      setSavingFollowUp(false);
+      setCancellingFollowUp(false);
     }
   };
 
@@ -733,11 +761,12 @@ export default function ContactDrawer({
                 {contact.followUpDate && (
                   <button
                     type="button"
-                    onClick={handleClearFollowUp}
-                    title="Remove follow-up reminder"
-                    className="text-[11px] font-mono text-zinc-400 hover:text-rose-500 transition-colors"
+                    onClick={handleOpenCancelModal}
+                    title="Cancel scheduled follow-up meeting"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 transition-colors"
                   >
-                    Clear Reminder ✕
+                    <XCircle className="w-3.5 h-3.5 text-rose-500" />
+                    <span>Cancel Follow-up</span>
                   </button>
                 )}
               </div>
@@ -928,6 +957,95 @@ export default function ContactDrawer({
           </div>
         </div>
       </aside>
+
+      {/* 🛑 Cancellation Confirmation Modal */}
+      {cancelModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-900/60 backdrop-blur-xs animate-in fade-in"
+          onClick={() => !cancellingFollowUp && setCancelModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-rose-200 dark:border-rose-900/60 bg-white dark:bg-zinc-900 shadow-2xl p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 shrink-0">
+                <XCircle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Cancel Follow-Up Meeting
+                </h3>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                  Why is this follow-up being cancelled? A cancellation notice will be emailed to both participants.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                Please provide a reason for cancelling this meeting with <span className="font-semibold">{contact.name}</span>:
+              </label>
+              <textarea
+                rows={3}
+                value={cancelReasonInput}
+                onChange={(e) => setCancelReasonInput(e.target.value)}
+                placeholder="e.g. Client rescheduled to next month / Issue resolved over phone / Conflict with personal schedule"
+                className="w-full rounded-md border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/80 p-2.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-rose-500 dark:focus:border-rose-500 focus:outline-none resize-none"
+                autoFocus
+              />
+
+              {/* Quick suggestion tags */}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[
+                  "Client rescheduled to next month",
+                  "Issue resolved over phone",
+                  "Conflict with personal schedule",
+                  "Meeting no longer required"
+                ].map((reason) => (
+                  <button
+                    key={reason}
+                    type="button"
+                    onClick={() => setCancelReasonInput(reason)}
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors border border-zinc-200 dark:border-zinc-700"
+                  >
+                    + {reason}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+              <button
+                type="button"
+                disabled={cancellingFollowUp}
+                onClick={() => setCancelModalOpen(false)}
+                className="px-3 py-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-md transition-colors"
+              >
+                Keep Meeting
+              </button>
+              <button
+                type="button"
+                disabled={!cancelReasonInput.trim() || cancellingFollowUp}
+                onClick={handleConfirmCancelFollowUp}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-500 disabled:opacity-50 rounded-md shadow-sm transition-all"
+              >
+                {cancellingFollowUp ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Cancelling...</span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Cancel Meeting</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

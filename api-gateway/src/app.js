@@ -1242,6 +1242,148 @@ export async function dispatchUrgentFollowUpEmail(contact) {
   return dispatchFollowUpToBothParties({ user, contact, isUrgent: true });
 }
 
+/**
+ * Dual-Recipient Meeting Cancellation Dispatcher:
+ * Dispatches personalized cancellation emails to BOTH Person 1 (Organizer) and Person 2 (Contact).
+ */
+export async function dispatchCancellationEmailToBothParties({
+  user,
+  contact,
+  originalMeetingTime,
+  cancelReason
+}) {
+  if (!contact) return [];
+  const organizer = resolveOrganizerUser(user, contact);
+
+  const recipients = [];
+
+  // 1. Person 1 (The Organizer / Account Owner)
+  if (organizer?.email && String(organizer.email).trim() !== "") {
+    recipients.push({
+      to: String(organizer.email).trim(),
+      isOrganizer: true
+    });
+  }
+
+  // 2. Person 2 (The Contact / Meeting Partner), if email is present
+  if (contact?.email && String(contact.email).trim() !== "") {
+    recipients.push({
+      to: String(contact.email).trim(),
+      isOrganizer: false
+    });
+  }
+
+  const meetingTimeFormatted = originalMeetingTime
+    ? formatMeetingDateKolkata(originalMeetingTime)
+    : "Previously Scheduled Meeting";
+  const reasonText =
+    cancelReason && String(cancelReason).trim()
+      ? String(cancelReason).trim()
+      : "Rescheduled / Cancelled by organizer";
+  const contactPhone = contact.phoneNumber || "N/A";
+  const partnerNameForOrganizer = `${contact.name} (${contactPhone})`;
+  const partnerNameForContact = `${organizer.name} (${organizer.email}${organizer.phoneNumber ? ` • ${organizer.phoneNumber}` : ""})`;
+  const cancelledAtFormatted = new Date().toLocaleString("en-US", {
+    timeZone: "Asia/Kolkata",
+    dateStyle: "medium",
+    timeStyle: "short"
+  });
+
+  return Promise.allSettled(
+    recipients.map(async ({ to, isOrganizer }) => {
+      let subject = "";
+      let textBody = "";
+      let htmlBody = "";
+
+      if (isOrganizer) {
+        // ── Template A: For Person 1 (The Organizer) ──
+        subject = `🚫 Meeting Cancelled: Follow-up with ${contact.name}`;
+        textBody = `MEETING CANCELLED
+--------------------------------------------------
+Hello ${organizer.name},
+
+Your scheduled follow-up meeting with ${contact.name} (${contactPhone}) has been cancelled.
+
+CANCELLATION DETAILS:
+• Meeting Partner: ${contact.name} (${contactPhone})
+• Originally Scheduled For: ${meetingTimeFormatted}
+• Reason for Cancellation: ${reasonText}
+• Cancelled On: ${cancelledAtFormatted}
+--------------------------------------------------
+
+Dispatched via Smart Contact Manager CRM`;
+
+        htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${escapeXml(subject)}</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
+  <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #fecaca; border-radius: 10px; padding: 24px; background: #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <h2 style="color: #dc2626; margin-top: 0; font-size: 20px;">Smart Contact Manager &bull; Meeting Cancelled</h2>
+    <p style="font-size: 15px; color: #18181b; line-height: 1.5;">Hello <strong>${escapeXml(organizer.name)}</strong>,</p>
+    <p style="font-size: 14px; color: #3f3f46; line-height: 1.5;">The following scheduled follow-up meeting has been cancelled:</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #fef2f2; border-radius: 8px; font-size: 13px;">
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d; width: 140px;">Meeting Partner:</td><td style="padding: 10px 14px; color: #18181b;">${escapeXml(partnerNameForOrganizer)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Original Time:</td><td style="padding: 10px 14px; text-decoration: line-through; color: #71717a;">${escapeXml(meetingTimeFormatted)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Reason:</td><td style="padding: 10px 14px; font-weight: 600; color: #b91c1c;">${escapeXml(reasonText)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Cancelled On:</td><td style="padding: 10px 14px; color: #52525b;">${escapeXml(cancelledAtFormatted)}</td></tr>
+    </table>
+    <p style="font-size: 12px; color: #71717a; margin-top: 20px; border-top: 1px solid #fee2e2; padding-top: 12px;">Dispatched via SCM Mail Service &bull; scm.project.12@gmail.com</p>
+  </div>
+</body>
+</html>`;
+      } else {
+        // ── Template B: For Person 2 (The Contact / Meeting Partner) ──
+        subject = `🚫 Meeting Update: Cancelled by ${organizer.name}`;
+        textBody = `MEETING UPDATE - CANCELLED
+--------------------------------------------------
+Hi ${contact.name},
+
+Your upcoming meeting with ${organizer.name} has been cancelled.
+
+CANCELLATION DETAILS:
+• Originally Scheduled For: ${meetingTimeFormatted}
+• Reason Given: "${reasonText}"
+• Organizer Contact Info: ${partnerNameForContact}
+--------------------------------------------------
+
+If you have questions or wish to reschedule, please contact ${organizer.name} directly.
+
+Best regards,
+${organizer.name} & Smart Contact Manager`;
+
+        htmlBody = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>${escapeXml(subject)}</title></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
+  <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #fecaca; border-radius: 10px; padding: 24px; background: #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <h2 style="color: #dc2626; margin-top: 0; font-size: 20px;">Smart Contact Manager &bull; Meeting Cancelled</h2>
+    <p style="font-size: 15px; color: #18181b; line-height: 1.5;">Hello <strong>${escapeXml(contact.name)}</strong>,</p>
+    <p style="font-size: 14px; color: #3f3f46; line-height: 1.5;">Your upcoming meeting with <strong>${escapeXml(organizer.name)}</strong> has been cancelled.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #fef2f2; border-radius: 8px; font-size: 13px;">
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d; width: 140px;">Meeting Partner:</td><td style="padding: 10px 14px; color: #18181b;">${escapeXml(partnerNameForContact)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Original Time:</td><td style="padding: 10px 14px; text-decoration: line-through; color: #71717a;">${escapeXml(meetingTimeFormatted)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Reason:</td><td style="padding: 10px 14px; font-weight: 600; color: #b91c1c;">${escapeXml(reasonText)}</td></tr>
+      <tr><td style="padding: 10px 14px; font-weight: bold; color: #7f1d1d;">Organizer Email:</td><td style="padding: 10px 14px; color: #52525b;"><a href="mailto:${escapeXml(organizer.email)}" style="color: #dc2626; font-weight: 600;">${escapeXml(organizer.email)}</a></td></tr>
+    </table>
+    <p style="font-size: 12px; color: #71717a; margin-top: 20px; border-top: 1px solid #fee2e2; padding-top: 12px;">Dispatched via SCM Mail Service &bull; scm.project.12@gmail.com</p>
+  </div>
+</body>
+</html>`;
+      }
+
+      return mailTransporter.sendMail({
+        from: `"Smart Contact Manager Reminders" <${process.env.SMTP_USER || "scm.project.12@gmail.com"}>`,
+        to,
+        subject,
+        text: textBody,
+        html: htmlBody
+      });
+    })
+  );
+}
+
 function isGoogleOAuthConfigured() {
   const id = String(GOOGLE_CLIENT_ID || "").trim();
   const secret = String(GOOGLE_CLIENT_SECRET || "").trim();
@@ -2273,18 +2415,50 @@ app.patch("/v1/contacts/:id", (req, res, next) => {
       throw new HttpProblemError(422, "Unprocessable Entity", "Patched contact fields failed schema validation.");
     }
 
+    const originalMeetingTime = existing.followUpDate || req.body.originalFollowUpDate || null;
+    const cancelReason = req.body.cancelReason || "Rescheduled / Cancelled by organizer";
+
     const updated = {
       ...existing,
       ...req.body,
       id: existing.id,
       updatedAt: new Date().toISOString()
     };
+
+    if (req.body.clearFollowUp) {
+      updated.followUpDate = null;
+      updated.followUpReason = null;
+      updated.followUpUrgentSent = false;
+      delete updated.clearFollowUp;
+      delete updated.cancelReason;
+      delete updated.originalFollowUpDate;
+    }
+
     contactsStore.set(updated.id, updated);
     saveContactToMysql(updated);
     recordAuditEvent("CONTACT_PATCHED", updated.userId, `/v1/contacts/${updated.id}`, `Patched contact ${updated.name}`, req.correlationId);
 
-    // Trigger 1: Instant Confirmation Email if followUpDate was provided/scheduled
-    if (req.body.followUpDate) {
+    // Trigger Cancellation Dual-Recipient Email if followUp was cleared
+    if (req.body.clearFollowUp && originalMeetingTime) {
+      let requester = req.user || null;
+      let requesterEmail = req.body.userEmail || null;
+      if (!requesterEmail && req.headers?.authorization?.startsWith("Bearer ")) {
+        try {
+          const claims = verifyJwtHmacSha256(req.headers.authorization.slice(7).trim());
+          requester = claims;
+          requesterEmail = claims?.email || claims?.sub || null;
+        } catch (_jwtE) {}
+      }
+      setImmediate(() => {
+        dispatchCancellationEmailToBothParties({
+          user: requester || requesterEmail,
+          contact: existing,
+          originalMeetingTime,
+          cancelReason
+        }).catch((err) => console.warn("[CANCEL_MAIL_WARN]", err.message));
+      });
+    } else if (req.body.followUpDate) {
+      // Trigger 1: Instant Confirmation Email if followUpDate was provided/scheduled
       let requesterEmail = req.body.userEmail || null;
       if (!requesterEmail && req.headers?.authorization?.startsWith("Bearer ")) {
         try {
