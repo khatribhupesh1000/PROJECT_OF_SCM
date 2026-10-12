@@ -647,11 +647,13 @@ export default function ContactDrawer({
       } catch (_e) {}
 
       let userEmail = null;
+      let userName = null;
       try {
         const storedProfile = localStorage.getItem("scm_user_profile");
         if (storedProfile) {
           const parsed = JSON.parse(storedProfile);
           if (parsed?.email) userEmail = parsed.email;
+          if (parsed?.name) userName = parsed.name;
         }
       } catch (_) {}
 
@@ -660,7 +662,8 @@ export default function ContactDrawer({
         followUpReason: followUpReasonInput.trim(),
         followUpFixedAt: new Date().toISOString(),
         followUpUrgentSent: false,
-        userEmail: userEmail || undefined
+        userEmail: userEmail || undefined,
+        userName: userName || undefined
       };
 
       if (onUpdateFollowUpDate) {
@@ -879,11 +882,25 @@ export default function ContactDrawer({
     if (!emailSubject.trim() && !emailBody.trim()) return;
     setEmailSending(true);
     try {
+      let userEmail = null;
+      let userName = null;
+      try {
+        const storedProfile = localStorage.getItem("scm_user_profile");
+        if (storedProfile) {
+          const parsed = JSON.parse(storedProfile);
+          if (parsed?.email) userEmail = parsed.email;
+          if (parsed?.name) userName = parsed.name;
+        }
+      } catch (_) {}
+
       const sentSubject = emailSubject.trim() || `Message from SCM for ${contact.name}`;
       const res = await notificationApi.sendEmail({
         to: contact.email,
+        contactName: contact.name,
         subject: sentSubject,
-        body: emailBody.trim() || "(No message body)"
+        body: emailBody.trim() || "(No message body)",
+        senderName: userName || undefined,
+        senderEmail: userEmail || undefined
       });
       if (res?.status === "DELIVERED") {
         onNotify?.({

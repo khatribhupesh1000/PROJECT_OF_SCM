@@ -926,12 +926,15 @@ export const authApi = {
 };
 
 export const notificationApi = {
-  async sendEmail({ to, subject, body }) {
+  async sendEmail({ to, subject, body, senderName, senderEmail, contactName, type = "USER_COMPOSE" }) {
     const response = await api.post("/v1/notifications/emails", {
       to,
       subject,
       body,
-      type: "USER_COMPOSE"
+      senderName,
+      senderEmail,
+      contactName,
+      type
     });
     return response.data;
   }

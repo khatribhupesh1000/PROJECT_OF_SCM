@@ -49,8 +49,8 @@ export const mailTransporter = nodemailer.createTransport({
   port: 465,
   secure: true,
   auth: {
-    user: "scm.project.12@gmail.com",
-    pass: process.env.SMTP_PASS || process.env.MAIL_PASSWORD || ""
+    user: process.env.MAIL_USERNAME || "scm.project.12@gmail.com",
+    pass: process.env.MAIL_PASSWORD || process.env.SMTP_PASS || ""
   },
   tls: {
     rejectUnauthorized: false
@@ -60,7 +60,7 @@ export const mailTransporter = nodemailer.createTransport({
 if (process.env.NODE_ENV !== "test") {
   mailTransporter.verify((error, success) => {
     if (error) {
-      console.error("❌ [GMAIL SMTP ERROR]:", error.message);
+      console.error("❌ [GMAIL SMTP CONNECTION ERROR]:", error.message);
     } else {
       console.log("✅ [GMAIL SMTP READY]: Connected to smtp.gmail.com:465 successfully");
     }
@@ -1029,8 +1029,12 @@ function formatBookingTimestampKolkata(dateString) {
 
 function resolveOrganizerUser(userOrEmail, contact) {
   let email = typeof userOrEmail === "string" ? userOrEmail : userOrEmail?.email;
+  let name = typeof userOrEmail === "object" ? userOrEmail?.name : null;
   if (!email && contact?.userEmail) {
     email = contact.userEmail;
+  }
+  if (!name && contact?.userName) {
+    name = contact.userName;
   }
   let resolved = null;
   if (email) {
@@ -1047,7 +1051,7 @@ function resolveOrganizerUser(userOrEmail, contact) {
   if (resolved) {
     return {
       id: resolved.id,
-      name: resolved.name || "Organizer",
+      name: resolved.name || name || "Organizer",
       email: resolved.email,
       phoneNumber: resolved.phoneNumber || ""
     };
@@ -1055,15 +1059,15 @@ function resolveOrganizerUser(userOrEmail, contact) {
   if (typeof userOrEmail === "object" && userOrEmail?.email) {
     return {
       id: userOrEmail.id || "usr-unknown",
-      name: userOrEmail.name || userOrEmail.email.split("@")[0] || "Organizer",
+      name: userOrEmail.name || name || userOrEmail.email.split("@")[0] || "Organizer",
       email: userOrEmail.email,
       phoneNumber: userOrEmail.phoneNumber || ""
     };
   }
   return {
     id: "usr-default",
-    name: "Organizer",
-    email: email || process.env.SMTP_USER || "scm.project.12@gmail.com",
+    name: name || (email ? email.split("@")[0] : "Organizer"),
+    email: email || process.env.MAIL_USERNAME || "scm.project.12@gmail.com",
     phoneNumber: ""
   };
 }
@@ -2920,7 +2924,7 @@ app.get("/v1/media/photos/:id", (req, res, next) => {
 // ============================================================================
 app.post("/v1/notifications/emails", async (req, res, next) => {
   try {
-    const { to, type, subject, body } = req.body || {};
+    const { to, type, subject, body, senderName, senderEmail, contactName } = req.body || {};
     if (!to || typeof to !== "string" || !to.includes("@") || to.trim() === "") {
       throw new HttpProblemError(
         422,
@@ -2939,23 +2943,52 @@ app.post("/v1/notifications/emails", async (req, res, next) => {
       if (req.body?.simulateSmtpTimeout) {
         throw new Error("Simulated Gmail SMTP connection timeout");
       }
-      if (isLiveDbEnabled() && process.env.NODE_ENV !== "test") {
+      if (process.env.NODE_ENV !== "test") {
         const formattedTimestamp = new Date().toLocaleString("en-US", {
           timeZone: "Asia/Kolkata",
           dateStyle: "full",
           timeStyle: "medium"
         }) + " (IST)";
+
+        const resolvedSender = senderName && senderEmail
+          ? `${senderName} (${senderEmail})`
+          : (senderEmail || "Smart Contact Manager User");
+
+        const targetDisplayName = contactName
+          ? `${contactName} (${emailTo})`
+          : emailTo;
+
         await mailTransporter.sendMail({
           from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
           to: emailTo,
+          replyTo: senderEmail || "scm.project.12@gmail.com",
           subject: emailSubject,
-          text: `Smart Contact Manager Notification\n\nFrom / Sender: "Smart Contact Manager" <scm.project.12@gmail.com>\nTo / Receiver: ${emailTo}\nDate: ${formattedTimestamp}\nSubject: ${emailSubject}\n\n${emailBody}\n\nSent via SCM Enterprise Notification Service • scm.project.12@gmail.com`,
-          html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e4e4e7; border-radius: 8px; background: #ffffff;">
+          text: `Smart Contact Manager Message\n\n--------------------------------------------------\nMESSAGE PARTICIPANTS & DETAILS:\n--------------------------------------------------\n• From / Sender: Smart Contact Manager <scm.project.12@gmail.com> (via ${resolvedSender})\n• To / Receiver: ${targetDisplayName}\n• Date: ${formattedTimestamp}\n• Subject: ${emailSubject}\n--------------------------------------------------\n\n${emailBody}\n\nSent via SCM Enterprise Notification Service • scm.project.12@gmail.com`,
+          html: `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e4e4e7; border-radius: 10px; background: #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
             <div style="font-size: 18px; font-weight: 700; color: #059669; margin-bottom: 12px;">Smart Contact Manager</div>
-            <div style="background: #fafafa; border: 1px solid #f4f4f5; border-radius: 6px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: #52525b; line-height: 1.5;">
-              <div><strong>From / Sender:</strong> "Smart Contact Manager" &lt;scm.project.12@gmail.com&gt;</div>
-              <div><strong>To / Receiver:</strong> ${escapeXml(emailTo)}</div>
-              <div><strong>Date:</strong> ${escapeXml(formattedTimestamp)}</div>
+            <div style="background: #fafafa; border: 1px solid #f4f4f5; border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; font-size: 13px; color: #3f3f46; line-height: 1.6;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 4px 0; color: #71717a; width: 32%;">📧 <strong>From / Sender:</strong></td>
+                  <td style="padding: 4px 0; color: #18181b;">Smart Contact Manager &lt;scm.project.12@gmail.com&gt;</td>
+                </tr>
+                <tr>
+                  <td style="padding: 4px 0; color: #71717a;">👤 <strong>Sent By:</strong></td>
+                  <td style="padding: 4px 0; color: #18181b;"><strong>${escapeXml(resolvedSender)}</strong></td>
+                </tr>
+                <tr>
+                  <td style="padding: 4px 0; color: #71717a;">🎯 <strong>To / Receiver:</strong></td>
+                  <td style="padding: 4px 0; color: #18181b;"><strong>${escapeXml(targetDisplayName)}</strong></td>
+                </tr>
+                <tr>
+                  <td style="padding: 4px 0; color: #71717a;">⏰ <strong>Date:</strong></td>
+                  <td style="padding: 4px 0; color: #52525b;">${escapeXml(formattedTimestamp)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 4px 0; color: #71717a;">📌 <strong>Subject:</strong></td>
+                  <td style="padding: 4px 0; color: #18181b; font-weight: 600;">${escapeXml(emailSubject)}</td>
+                </tr>
+              </table>
             </div>
             <div style="font-size: 14px; color: #18181b; line-height: 1.6; white-space: pre-wrap;">${escapeXml(emailBody)}</div>
             <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0 12px 0;" />
