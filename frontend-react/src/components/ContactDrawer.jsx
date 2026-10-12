@@ -84,27 +84,42 @@ export function formatTimelineDate(dateValue) {
   if (!dateValue) return "";
   try {
     const d = new Date(dateValue);
-    if (isNaN(d.getTime())) return String(dateValue);
+    if (isNaN(d.getTime())) return String(dateValue || "");
     const now = new Date();
     const diffMs = now.getTime() - d.getTime();
     const diffSec = Math.floor(diffMs / 1000);
     if (diffSec >= 0 && diffSec < 60) return "Just now";
     if (diffSec >= 60 && diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-    const datePart = d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      timeZone: "Asia/Kolkata"
-    });
-    const timePart = d.toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-      timeZone: "Asia/Kolkata"
-    });
+    let datePart = "";
+    let timePart = "";
+    try {
+      datePart = d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "Asia/Kolkata"
+      });
+      timePart = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: "Asia/Kolkata"
+      });
+    } catch (_tzErr) {
+      datePart = d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric"
+      });
+      timePart = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true
+      });
+    }
     return `${datePart}, ${timePart} (IST)`;
   } catch (_e) {
-    return String(dateValue);
+    return String(dateValue || "");
   }
 }
 
@@ -574,7 +589,8 @@ export default function ContactDrawer({
     if (contact?.id) {
       try {
         const stored = localStorage.getItem(`scm_activities_${contact.id}`);
-        setActivities(stored ? JSON.parse(stored) : []);
+        const parsed = stored ? JSON.parse(stored) : [];
+        setActivities(Array.isArray(parsed) ? parsed : []);
       } catch (_e) {
         setActivities([]);
       }
@@ -905,48 +921,47 @@ export default function ContactDrawer({
     }
   };
 
-  const allTimelineEvents = React.useMemo(() => {
-    const list = [...activities];
-
-    // Synthetic carrier result if not already recorded in activities
-    if (carrierResult && !list.some((a) => a.type === "CARRIER_VERIFIED")) {
-      list.push({
-        id: "evt-carrier",
-        type: "CARRIER_VERIFIED",
-        title: `Telecom line verified (${carrierResult.carrier})`,
-        meta: `${carrierResult.lineType} • ${carrierResult.attempts} attempt(s)`,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Synthetic profile updated event
-    if (contact?.updatedAt) {
-      list.push({
-        id: "evt-updated",
-        type: "PROFILE_UPDATED",
-        title: "Contact profile synced",
-        meta: `Updated record #${contact.id}`,
-        timestamp: contact.updatedAt
-      });
-    }
-
-    // Synthetic profile created event
-    if (contact?.createdAt) {
-      list.push({
-        id: "evt-created",
-        type: "PROFILE_CREATED",
-        title: "Added to workspace directory",
-        meta: `Source: ${contact.company || "Direct entry"}`,
-        timestamp: contact.createdAt
-      });
-    }
-
-    return list.sort((a, b) => {
-      const timeA = new Date(a.timestamp || 0).getTime();
-      const timeB = new Date(b.timestamp || 0).getTime();
-      return timeB - timeA;
-    });
-  }, [activities, carrierResult, contact?.id, contact?.updatedAt, contact?.createdAt, contact?.company]);
+  const safeActivities = Array.isArray(activities) ? activities : [];
+  const allTimelineEvents = [
+    ...safeActivities,
+    ...(carrierResult && !safeActivities.some((a) => a.type === "CARRIER_VERIFIED")
+      ? [
+          {
+            id: "evt-carrier",
+            type: "CARRIER_VERIFIED",
+            title: `Telecom line verified (${carrierResult.carrier || "Carrier"})`,
+            meta: `${carrierResult.lineType || "Mobile"} • ${carrierResult.attempts || 1} attempt(s)`,
+            timestamp: new Date().toISOString()
+          }
+        ]
+      : []),
+    ...(contact?.updatedAt
+      ? [
+          {
+            id: "evt-updated",
+            type: "PROFILE_UPDATED",
+            title: "Contact profile synced",
+            meta: `Updated record #${contact.id}`,
+            timestamp: contact.updatedAt
+          }
+        ]
+      : []),
+    ...(contact?.createdAt
+      ? [
+          {
+            id: "evt-created",
+            type: "PROFILE_CREATED",
+            title: "Added to workspace directory",
+            meta: `Source: ${contact.company || "Direct entry"}`,
+            timestamp: contact.createdAt
+          }
+        ]
+      : [])
+  ].sort((a, b) => {
+    const timeA = new Date(a.timestamp || 0).getTime();
+    const timeB = new Date(b.timestamp || 0).getTime();
+    return timeB - timeA;
+  });
 
   return (
     <div
@@ -1548,12 +1563,12 @@ export default function ContactDrawer({
             ) : (
               <div className="relative pl-5 space-y-4 before:absolute before:left-[9px] before:top-2 before:bottom-2 before:w-px before:bg-zinc-200 dark:before:bg-zinc-800">
                 {allTimelineEvents.map((ev) => {
-                  const badge = getActivityBadge(ev.type);
-                  const Icon = badge.icon;
+                  const badge = getActivityBadge(ev.type) || {};
+                  const Icon = badge.icon || Clock;
                   return (
                     <div key={ev.id} className="relative text-xs group">
                       <span
-                        className={`absolute -left-5 top-0.5 flex items-center justify-center w-5 h-5 rounded-full ring-4 ring-white dark:ring-zinc-900 ${badge.accent} text-white shadow-xs`}
+                        className={`absolute -left-5 top-0.5 flex items-center justify-center w-5 h-5 rounded-full ring-4 ring-white dark:ring-zinc-900 ${badge.accent || "bg-zinc-500"} text-white shadow-xs`}
                       >
                         <Icon className="w-2.5 h-2.5" />
                       </span>
