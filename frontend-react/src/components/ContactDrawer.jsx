@@ -27,7 +27,8 @@ import {
   Calendar,
   XCircle,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Plus
 } from "lucide-react";
 import {
   formatPhoneWithFlag,
@@ -76,6 +77,94 @@ export function formatFriendlyDateTime(dateValue) {
     return `${datePart} at ${timePart} (IST)`;
   } catch (_e) {
     return "";
+  }
+}
+
+export function formatTimelineDate(dateValue) {
+  if (!dateValue) return "";
+  try {
+    const d = new Date(dateValue);
+    if (isNaN(d.getTime())) return String(dateValue);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffSec = Math.floor(diffMs / 1000);
+    if (diffSec >= 0 && diffSec < 60) return "Just now";
+    if (diffSec >= 60 && diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+    const datePart = d.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "Asia/Kolkata"
+    });
+    const timePart = d.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata"
+    });
+    return `${datePart}, ${timePart} (IST)`;
+  } catch (_e) {
+    return String(dateValue);
+  }
+}
+
+export function getActivityBadge(type) {
+  switch (type) {
+    case "MEETING_SCHEDULED":
+      return {
+        icon: Calendar,
+        accent: "bg-amber-500",
+        badge: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/60"
+      };
+    case "MEETING_CANCELLED":
+      return {
+        icon: XCircle,
+        accent: "bg-rose-500",
+        badge: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800/60"
+      };
+    case "EMAIL_SENT":
+      return {
+        icon: Mail,
+        accent: "bg-sky-500",
+        badge: "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800/60"
+      };
+    case "CALL_INITIATED":
+      return {
+        icon: PhoneCall,
+        accent: "bg-purple-500",
+        badge: "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400 dark:border-purple-800/60"
+      };
+    case "WHATSAPP_INITIATED":
+      return {
+        icon: MessageCircle,
+        accent: "bg-emerald-500",
+        badge: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800/60"
+      };
+    case "CARRIER_VERIFIED":
+      return {
+        icon: Radio,
+        accent: "bg-teal-500",
+        badge: "bg-teal-50 text-teal-700 border-teal-200 dark:bg-teal-950/40 dark:text-teal-400 dark:border-teal-800/60"
+      };
+    case "QUICK_NOTE":
+      return {
+        icon: FileText,
+        accent: "bg-indigo-500",
+        badge: "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-400 dark:border-indigo-800/60"
+      };
+    case "PROFILE_UPDATED":
+      return {
+        icon: Edit3,
+        accent: "bg-zinc-400 dark:bg-zinc-500",
+        badge: "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700"
+      };
+    case "PROFILE_CREATED":
+    default:
+      return {
+        icon: Star,
+        accent: "bg-zinc-400 dark:bg-zinc-600",
+        badge: "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700"
+      };
   }
 }
 
@@ -477,6 +566,48 @@ export default function ContactDrawer({
   const [cancelReasonInput, setCancelReasonInput] = useState("");
   const [cancellingFollowUp, setCancellingFollowUp] = useState(false);
 
+  // ── Activity History Timeline state ──
+  const [activities, setActivities] = useState([]);
+  const [quickNoteInput, setQuickNoteInput] = useState("");
+
+  useEffect(() => {
+    if (contact?.id) {
+      try {
+        const stored = localStorage.getItem(`scm_activities_${contact.id}`);
+        setActivities(stored ? JSON.parse(stored) : []);
+      } catch (_e) {
+        setActivities([]);
+      }
+    } else {
+      setActivities([]);
+    }
+  }, [contact?.id]);
+
+  const logActivity = (type, title, meta) => {
+    if (!contact?.id) return;
+    const newActivity = {
+      id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      type,
+      title,
+      meta,
+      timestamp: new Date().toISOString()
+    };
+    setActivities((prev) => {
+      const updated = [newActivity, ...prev];
+      try {
+        localStorage.setItem(`scm_activities_${contact.id}`, JSON.stringify(updated));
+      } catch (_e) {}
+      return updated;
+    });
+  };
+
+  const handleAddQuickNote = (e) => {
+    e?.preventDefault?.();
+    if (!quickNoteInput.trim()) return;
+    logActivity("QUICK_NOTE", "Interaction Note", quickNoteInput.trim());
+    setQuickNoteInput("");
+  };
+
   useEffect(() => {
     if (contact) {
       setFollowUpDateInput(contact.followUpDate || "");
@@ -526,6 +657,11 @@ export default function ContactDrawer({
           detail: "Follow-up scheduled! Confirmation email sent via SCM Mail."
         });
       }
+      logActivity(
+        "MEETING_SCHEDULED",
+        "Follow-Up Scheduled",
+        `${formatFriendlyDateTime(isoDateString)}${payload.followUpReason ? ` • ${payload.followUpReason}` : ""}`
+      );
     } catch (err) {
       onNotify?.({ variant: "error", ...parseRfc7807Error(err) });
     } finally {
@@ -578,6 +714,11 @@ export default function ContactDrawer({
           detail: "Cancellation notice dispatched to both participants."
         });
       }
+      logActivity(
+        "MEETING_CANCELLED",
+        "Follow-Up Cancelled",
+        `Reason: ${cancelReason}${originalDate ? ` • Scheduled was ${formatFriendlyDateTime(originalDate)}` : ""}`
+      );
     } catch (err) {
       onNotify?.({ variant: "error", ...parseRfc7807Error(err) });
     } finally {
@@ -687,7 +828,14 @@ export default function ContactDrawer({
     setVerifying(true);
     try {
       const res = await onSoapVerify(contact);
-      if (res) setCarrierResult(res);
+      if (res) {
+        setCarrierResult(res);
+        logActivity(
+          "CARRIER_VERIFIED",
+          `Telecom line verified (${res.carrier || "Carrier"})`,
+          `${res.lineType || "Mobile"} • ${res.attempts || 1} attempt(s)`
+        );
+      }
     } finally {
       setVerifying(false);
     }
@@ -715,9 +863,10 @@ export default function ContactDrawer({
     if (!emailSubject.trim() && !emailBody.trim()) return;
     setEmailSending(true);
     try {
+      const sentSubject = emailSubject.trim() || `Message from SCM for ${contact.name}`;
       const res = await notificationApi.sendEmail({
         to: contact.email,
-        subject: emailSubject.trim() || `Message from SCM for ${contact.name}`,
+        subject: sentSubject,
         body: emailBody.trim() || "(No message body)"
       });
       if (res?.status === "DELIVERED") {
@@ -741,6 +890,11 @@ export default function ContactDrawer({
           detail: `Processed for ${contact.email}`
         });
       }
+      logActivity(
+        "EMAIL_SENT",
+        "Email Dispatched",
+        `Subject: "${sentSubject}" • Dispatched to ${contact.email}`
+      );
       setEmailOpen(false);
       setEmailSubject("");
       setEmailBody("");
@@ -751,33 +905,48 @@ export default function ContactDrawer({
     }
   };
 
-  const timelineEvents = [
-    ...(carrierResult
-      ? [
-          {
-            id: "evt-carrier",
-            title: `Telecom line verified (${carrierResult.carrier})`,
-            meta: `${carrierResult.lineType} • ${carrierResult.attempts} attempt(s)`,
-            time: "Just now",
-            accent: "bg-emerald-500"
-          }
-        ]
-      : []),
-    {
-      id: "evt-updated",
-      title: "Contact profile synced",
-      meta: `Updated record ${contact.id}`,
-      time: formatShortDate(contact.updatedAt),
-      accent: "bg-zinc-400 dark:bg-zinc-500"
-    },
-    {
-      id: "evt-created",
-      title: "Added to workspace directory",
-      meta: `Source: ${contact.company || "Direct entry"}`,
-      time: formatShortDate(contact.createdAt),
-      accent: "bg-zinc-300 dark:bg-zinc-700"
+  const allTimelineEvents = React.useMemo(() => {
+    const list = [...activities];
+
+    // Synthetic carrier result if not already recorded in activities
+    if (carrierResult && !list.some((a) => a.type === "CARRIER_VERIFIED")) {
+      list.push({
+        id: "evt-carrier",
+        type: "CARRIER_VERIFIED",
+        title: `Telecom line verified (${carrierResult.carrier})`,
+        meta: `${carrierResult.lineType} • ${carrierResult.attempts} attempt(s)`,
+        timestamp: new Date().toISOString()
+      });
     }
-  ];
+
+    // Synthetic profile updated event
+    if (contact?.updatedAt) {
+      list.push({
+        id: "evt-updated",
+        type: "PROFILE_UPDATED",
+        title: "Contact profile synced",
+        meta: `Updated record #${contact.id}`,
+        timestamp: contact.updatedAt
+      });
+    }
+
+    // Synthetic profile created event
+    if (contact?.createdAt) {
+      list.push({
+        id: "evt-created",
+        type: "PROFILE_CREATED",
+        title: "Added to workspace directory",
+        meta: `Source: ${contact.company || "Direct entry"}`,
+        timestamp: contact.createdAt
+      });
+    }
+
+    return list.sort((a, b) => {
+      const timeA = new Date(a.timestamp || 0).getTime();
+      const timeB = new Date(b.timestamp || 0).getTime();
+      return timeB - timeA;
+    });
+  }, [activities, carrierResult, contact?.id, contact?.updatedAt, contact?.createdAt, contact?.company]);
 
   return (
     <div
@@ -925,6 +1094,13 @@ export default function ContactDrawer({
                 href={waHref}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => {
+                  logActivity(
+                    "WHATSAPP_INITIATED",
+                    "WhatsApp Chat Initiated",
+                    `Opened WhatsApp chat with ${contact.phoneNumber}`
+                  );
+                }}
                 className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/60 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 hover:border-emerald-200 dark:hover:border-emerald-800/60 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:text-emerald-700 dark:hover:text-emerald-400 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
               >
                 <MessageCircle className="w-3.5 h-3.5 text-emerald-500" />
@@ -933,6 +1109,13 @@ export default function ContactDrawer({
 
               <a
                 href={telHref}
+                onClick={() => {
+                  logActivity(
+                    "CALL_INITIATED",
+                    "Phone Call Initiated",
+                    `Dialed ${contact.phoneNumber}`
+                  );
+                }}
                 className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/60 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
               >
                 <PhoneCall className="w-3.5 h-3.5 text-zinc-400" />
@@ -1320,12 +1503,12 @@ export default function ContactDrawer({
             />
           </div>
 
-          {/* Activity Timeline & Carrier Diagnostics */}
-          <div className="p-5 space-y-3">
+          {/* Activity & Interaction History Timeline */}
+          <div className="p-5 space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                 <Clock className="w-3 h-3" />
-                <span>Activity Timeline</span>
+                <span>Activity &amp; Interaction History</span>
               </span>
               <button
                 type="button"
@@ -1338,24 +1521,60 @@ export default function ContactDrawer({
               </button>
             </div>
 
-            <div className="relative pl-4 space-y-4 before:absolute before:left-[5px] before:top-1.5 before:bottom-1.5 before:w-px before:bg-zinc-200 dark:before:bg-zinc-800">
-              {timelineEvents.map((ev) => (
-                <div key={ev.id} className="relative text-xs">
-                  <span
-                    className={`absolute -left-4 top-1.5 w-2.5 h-2.5 rounded-full ring-4 ring-white dark:ring-zinc-900 ${ev.accent}`}
-                  />
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                      {ev.title}
-                    </span>
-                    <span className="font-mono text-[10px] text-zinc-400">{ev.time}</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 font-mono">
-                    {ev.meta}
-                  </p>
-                </div>
-              ))}
-            </div>
+            {/* Quick Note Input Form */}
+            <form onSubmit={handleAddQuickNote} className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={quickNoteInput}
+                onChange={(e) => setQuickNoteInput(e.target.value)}
+                placeholder="Log a call, meeting note, or quick update..."
+                className="flex-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/60 px-3 py-1.5 text-xs text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:border-zinc-400 dark:focus:border-zinc-600 focus:outline-none"
+              />
+              <button
+                type="submit"
+                disabled={!quickNoteInput.trim()}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-medium hover:bg-zinc-800 dark:hover:bg-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 shadow-xs active:scale-[0.98]"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Note</span>
+              </button>
+            </form>
+
+            {/* Timeline Stream */}
+            {allTimelineEvents.length === 0 ? (
+              <div className="py-6 text-center text-xs text-zinc-400 dark:text-zinc-500 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-lg">
+                No logged interactions yet. Scheduled meetings, dispatched emails, calls, or quick notes will appear here.
+              </div>
+            ) : (
+              <div className="relative pl-5 space-y-4 before:absolute before:left-[9px] before:top-2 before:bottom-2 before:w-px before:bg-zinc-200 dark:before:bg-zinc-800">
+                {allTimelineEvents.map((ev) => {
+                  const badge = getActivityBadge(ev.type);
+                  const Icon = badge.icon;
+                  return (
+                    <div key={ev.id} className="relative text-xs group">
+                      <span
+                        className={`absolute -left-5 top-0.5 flex items-center justify-center w-5 h-5 rounded-full ring-4 ring-white dark:ring-zinc-900 ${badge.accent} text-white shadow-xs`}
+                      >
+                        <Icon className="w-2.5 h-2.5" />
+                      </span>
+                      <div className="flex items-center justify-between gap-2 pl-2">
+                        <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                          {ev.title}
+                        </span>
+                        <span className="font-mono text-[10px] text-zinc-400 shrink-0">
+                          {formatTimelineDate(ev.timestamp)}
+                        </span>
+                      </div>
+                      {ev.meta && (
+                        <p className="pl-2 text-[11px] text-zinc-500 dark:text-zinc-400 mt-0.5 font-mono break-words">
+                          {ev.meta}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </aside>
