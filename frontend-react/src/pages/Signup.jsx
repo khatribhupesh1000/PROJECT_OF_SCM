@@ -15,6 +15,7 @@ export default function Signup({ onNotify }) {
     password: ""
   });
   const [loading, setLoading] = useState(false);
+  const [emailConflict, setEmailConflict] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.location?.search) return;
@@ -29,14 +30,35 @@ export default function Signup({ onNotify }) {
       if (emailParam) {
         setForm((prev) => ({ ...prev, email: emailParam }));
       }
-      onNotify?.({
-        variant: "info",
-        title: "Registration Required",
-        detail:
-          oauthError === "no_account_found"
-            ? "No account found with this Google email. Please register below."
-            : `Google authentication notice: ${oauthError}`
-      });
+      if (
+        oauthError === "already_registered" ||
+        oauthError === "already_exists" ||
+        /already exists|already registered/i.test(oauthError)
+      ) {
+        setEmailConflict(true);
+        onNotify?.({
+          variant: "warning",
+          title: "Email already registered",
+          detail: "An account with this email address already exists. Please sign in instead.",
+          action: (
+            <Link
+              to={`/login?email=${encodeURIComponent(emailParam || "")}`}
+              className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+            >
+              Sign In Instead &rarr;
+            </Link>
+          )
+        });
+      } else {
+        onNotify?.({
+          variant: "info",
+          title: "Registration Required",
+          detail:
+            oauthError === "no_account_found"
+              ? "No account found with this Google email. Please register below."
+              : `Google authentication notice: ${oauthError}`
+        });
+      }
       window.history.replaceState({}, document.title, "/signup");
     }
   }, [onNotify]);
@@ -44,6 +66,7 @@ export default function Signup({ onNotify }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setEmailConflict(false);
     try {
       const cleanDigits = String(form.localPhone || "").replace(/\D/g, "");
       const combinedPhone = cleanDigits ? `${countryCode}${cleanDigits}` : "";
@@ -60,7 +83,31 @@ export default function Signup({ onNotify }) {
       });
       navigate("/login", { state: { registeredEmail: form.email.trim() } });
     } catch (err) {
-      onNotify({ variant: "error", ...parseRfc7807Error(err) });
+      const parsed = parseRfc7807Error(err);
+      const isAlreadyRegistered =
+        parsed.status === 409 ||
+        (parsed.status === 422 && /already exists|already registered/i.test(parsed.detail || "")) ||
+        /already exists|already registered/i.test(parsed.detail || "");
+
+      if (isAlreadyRegistered) {
+        setEmailConflict(true);
+        const userEmail = form.email.trim();
+        onNotify({
+          variant: "warning",
+          title: "Email already registered",
+          detail: "An account with this email address already exists. Please sign in instead.",
+          action: (
+            <Link
+              to={`/login?email=${encodeURIComponent(userEmail)}`}
+              className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+            >
+              Sign In Instead &rarr;
+            </Link>
+          )
+        });
+      } else {
+        onNotify({ variant: "error", ...parsed });
+      }
     } finally {
       setLoading(false);
     }
@@ -173,10 +220,30 @@ export default function Signup({ onNotify }) {
               required
               autoComplete="off"
               value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              onChange={(e) => {
+                setEmailConflict(false);
+                setForm({ ...form, email: e.target.value });
+              }}
               placeholder="john@example.com"
-              className={`${inputClass} font-mono`}
+              className={`${inputClass} font-mono ${
+                emailConflict
+                  ? "border-amber-400 dark:border-amber-600 focus:border-amber-500 ring-2 ring-amber-400/20"
+                  : ""
+              }`}
             />
+            {emailConflict && (
+              <div className="mt-1.5 p-2 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs flex items-center justify-between gap-2 animate-in fade-in duration-200">
+                <span className="text-[11px] text-amber-800 dark:text-amber-300">
+                  An account with this email already exists.
+                </span>
+                <Link
+                  to={`/login?email=${encodeURIComponent(form.email.trim())}`}
+                  className="font-medium text-[11px] text-amber-900 dark:text-amber-200 underline hover:no-underline whitespace-nowrap"
+                >
+                  Sign In Instead &rarr;
+                </Link>
+              </div>
+            )}
           </div>
 
           <div>

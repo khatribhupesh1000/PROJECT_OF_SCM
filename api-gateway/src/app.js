@@ -756,11 +756,15 @@ app.post("/v1/auth/users", (req, res, next) => {
     if (!normalizedEmail.includes("@")) {
       throw new HttpProblemError(422, "Unprocessable Entity", "Email format is invalid.");
     }
-    if (usersStore.has(normalizedEmail)) {
+    if (isLiveDbEnabled()) {
+      loadUsersFromMysql(usersStore);
+    }
+    const existingUser = usersStore.get(normalizedEmail);
+    if (existingUser) {
       throw new HttpProblemError(
-        422,
-        "Unprocessable Entity",
-        `User with email '${normalizedEmail}' already exists.`
+        409,
+        "Conflict",
+        `User with email '${normalizedEmail}' already exists. Please sign in instead.`
       );
     }
 
@@ -1185,7 +1189,19 @@ app.get(["/login/oauth2/code/google", "/v1/auth/oauth2/google/callback"], async 
       return res.redirect(`${FRONTEND_BASE_URL}/login?${redirectParams.toString()}`);
     }
 
-    // Intent is signup: Save user in MySQL with provider GOOGLE
+    // Intent is signup: Check if account already exists
+    if (intent === "signup") {
+      if (isLiveDbEnabled()) {
+        loadUsersFromMysql(usersStore);
+      }
+      if (usersStore.has(cleanEmail)) {
+        return res.redirect(
+          `${FRONTEND_BASE_URL}/signup?oauth_error=already_registered&email=${encodeURIComponent(cleanEmail)}`
+        );
+      }
+    }
+
+    // Save user in MySQL with provider GOOGLE
     const envelope = provisionGoogleUserAndNotify({
       email: cleanEmail,
       name: cleanName,
@@ -1212,6 +1228,19 @@ app.post(["/v1/auth/oauth2/google/tokens", "/v1/auth/oauth2/google/signup"], (re
   try {
     const isSignupPath = req.path.endsWith("/signup");
     const intent = (req.body && req.body.intent) || (isSignupPath ? "signup" : "login");
+    const cleanEmail = String(req.body?.email || "").trim().toLowerCase();
+    if (intent === "signup" && cleanEmail) {
+      if (isLiveDbEnabled()) {
+        loadUsersFromMysql(usersStore);
+      }
+      if (usersStore.has(cleanEmail)) {
+        throw new HttpProblemError(
+          409,
+          "Conflict",
+          `User with email '${cleanEmail}' already exists. Please sign in instead.`
+        );
+      }
+    }
     const envelope = provisionGoogleUserAndNotify({
       email: req.body?.email,
       name: req.body?.name,
@@ -1349,6 +1378,14 @@ function handleGithubUserAuth({ email, name, githubId, intent = "login", correla
     );
   }
 
+  if (intent === "signup" && user) {
+    throw new HttpProblemError(
+      409,
+      "Conflict",
+      `User with email '${cleanEmail}' already exists. Please sign in instead.`
+    );
+  }
+
   if (!user) {
     user = {
       id: crypto.randomUUID(),
@@ -1458,8 +1495,13 @@ app.get("/v1/auth/oauth2/github/callback", async (req, res) => {
     return res.redirect(`${FRONTEND_BASE_URL}/login?${redirectParams.toString()}`);
   } catch (err) {
     const targetPage = intent === "signup" ? "signup" : "login";
+    const userEmail = resolved?.email || email || "";
+    const isConflict = err.status === 409 || /already exists/i.test(err.detail || "");
+    const oauthErrorParam = isConflict
+      ? `already_registered&email=${encodeURIComponent(userEmail)}`
+      : encodeURIComponent(err.detail || err.message || "Account not found. Please sign up first.");
     return res.redirect(
-      `${FRONTEND_BASE_URL}/${targetPage}?oauth_error=${encodeURIComponent(err.detail || err.message || "Account not found. Please sign up first.")}`
+      `${FRONTEND_BASE_URL}/${targetPage}?oauth_error=${oauthErrorParam}`
     );
   }
 });

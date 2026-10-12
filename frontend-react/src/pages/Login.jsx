@@ -22,6 +22,18 @@ export default function Login({ onAuthSuccess, onNotify }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    if (location.state?.registeredEmail) {
+      setEmail(location.state.registeredEmail);
+    } else if (location.search) {
+      const params = new URLSearchParams(location.search);
+      const emailParam = params.get("email");
+      if (emailParam) {
+        setEmail(emailParam);
+      }
+    }
+  }, [location]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !window.location?.search) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get("github_modal") === "1" || params.get("github_fallback") === "1") {

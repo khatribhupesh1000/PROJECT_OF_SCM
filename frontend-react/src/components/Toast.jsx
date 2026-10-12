@@ -8,6 +8,7 @@ export default function Toast({ toast, onClose }) {
   if (!toast) return null;
 
   const isError = toast.variant === "error";
+  const isWarning = toast.variant === "warning";
 
   return (
     <div
@@ -18,6 +19,8 @@ export default function Toast({ toast, onClose }) {
       <div className="p-3.5 flex items-start gap-2.5">
         {isError ? (
           <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+        ) : isWarning ? (
+          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
         ) : (
           <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
         )}
@@ -29,6 +32,11 @@ export default function Toast({ toast, onClose }) {
             <p className="mt-0.5 text-zinc-500 dark:text-zinc-400 leading-relaxed">
               {toast.detail}
             </p>
+          )}
+          {toast.action && (
+            <div className="mt-2" onClick={onClose}>
+              {toast.action}
+            </div>
           )}
         </div>
         <button
@@ -42,7 +50,7 @@ export default function Toast({ toast, onClose }) {
       </div>
       <div
         className={`h-0.5 w-full animate-toast-progress ${
-          isError ? "bg-rose-500" : "bg-emerald-500"
+          isError ? "bg-rose-500" : isWarning ? "bg-amber-500" : "bg-emerald-500"
         }`}
       />
     </div>
