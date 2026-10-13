@@ -945,11 +945,9 @@ app.delete("/v1/auth/tokens", (req, res) => {
 });
 
 const GOOGLE_CLIENT_ID =
-  process.env.GOOGLE_CLIENT_ID ||
-  "";
+  process.env.GOOGLE_CLIENT_ID || "";
 const GOOGLE_CLIENT_SECRET =
-  process.env.GOOGLE_CLIENT_SECRET ||
-  "";
+  process.env.GOOGLE_CLIENT_SECRET || "";
 const GOOGLE_REDIRECT_URI =
   process.env.GOOGLE_REDIRECT_URI ||
   "http://localhost:8081/login/oauth2/code/google";
