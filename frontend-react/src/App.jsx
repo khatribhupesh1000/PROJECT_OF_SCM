@@ -6,6 +6,7 @@ import CommandPalette from "./components/CommandPalette.jsx";
 import Login from "./pages/Login.jsx";
 import Signup from "./pages/Signup.jsx";
 import ForgotPassword from "./pages/ForgotPassword.jsx";
+import ResetPassword from "./pages/ResetPassword.jsx";
 import ContactsList from "./pages/ContactsList.jsx";
 import ContactDetails from "./pages/ContactDetails.jsx";
 import AddContact from "./pages/AddContact.jsx";
@@ -149,6 +150,10 @@ export default function App() {
             <Route
               path="/forgot-password"
               element={<ForgotPassword onNotify={handleNotify} />}
+            />
+            <Route
+              path="/reset-password"
+              element={<ResetPassword onNotify={handleNotify} />}
             />
             <Route
               path="/oauth/callback"

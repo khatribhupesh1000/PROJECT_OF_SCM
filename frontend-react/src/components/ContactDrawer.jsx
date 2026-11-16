@@ -41,7 +41,9 @@ import {
   parseRfc7807Error,
   getLocationAndTimezoneInfo,
   downloadVCard,
-  getFollowUpStatus
+  getFollowUpStatus,
+  maskPhoneNumber,
+  maskEmailAddress
 } from "../services/api.js";
 import { formatPhoneForTel, formatPhoneForWhatsApp } from "./CallWhatsAppActions.jsx";
 
@@ -565,13 +567,31 @@ export default function ContactDrawer({
   onDelete,
   onSoapVerify,
   onCopyPhone,
-  onNotify
+  onNotify,
+  currentUser,
+  isMasked = false
 }) {
   const [copiedField, setCopiedField] = useState(null);
   const [notesDraft, setNotesDraft] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [carrierResult, setCarrierResult] = useState(null);
+
+  const [currentUserProfile, setCurrentUserProfile] = useState(() => {
+    try {
+      const stored = localStorage.getItem("scm_user_profile");
+      return stored ? JSON.parse(stored) : null;
+    } catch (_) {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("scm_user_profile");
+      if (stored) setCurrentUserProfile(JSON.parse(stored));
+    } catch (_) {}
+  }, []);
 
   // ── Follow-Up Meeting & Reminder state ──
   const [followUpDateInput, setFollowUpDateInput] = useState("");
@@ -590,12 +610,23 @@ export default function ContactDrawer({
       try {
         const stored = localStorage.getItem(`scm_activities_${contact.id}`);
         const parsed = stored ? JSON.parse(stored) : [];
-        setActivities(Array.isArray(parsed) ? parsed : []);
+        const acts = Array.isArray(parsed) ? parsed : [];
+        setActivities(acts);
+        const existingCarrier = acts.find((a) => a.type === "CARRIER_VERIFIED");
+        if (existingCarrier) {
+          const match = existingCarrier.title?.match(/\((.+?)\)/);
+          const carrier = match ? match[1] : (existingCarrier.carrier || "Carrier");
+          setCarrierResult({ carrier, lineType: "MOBILE_VERIFIED" });
+        } else {
+          setCarrierResult(null);
+        }
       } catch (_e) {
         setActivities([]);
+        setCarrierResult(null);
       }
     } else {
       setActivities([]);
+      setCarrierResult(null);
     }
   }, [contact?.id]);
 
@@ -646,24 +677,16 @@ export default function ContactDrawer({
         }
       } catch (_e) {}
 
-      let userEmail = null;
-      let userName = null;
-      try {
-        const storedProfile = localStorage.getItem("scm_user_profile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          if (parsed?.email) userEmail = parsed.email;
-          if (parsed?.name) userName = parsed.name;
-        }
-      } catch (_) {}
+      const resolvedUserEmail = currentUserProfile?.email || currentUser?.email || undefined;
+      const resolvedUserName = currentUserProfile?.name || currentUser?.name || undefined;
 
       const payload = {
         followUpDate: isoDateString,
         followUpReason: followUpReasonInput.trim(),
         followUpFixedAt: new Date().toISOString(),
         followUpUrgentSent: false,
-        userEmail: userEmail || undefined,
-        userName: userName || undefined
+        userEmail: resolvedUserEmail,
+        userName: resolvedUserName
       };
 
       if (onUpdateFollowUpDate) {
@@ -697,15 +720,7 @@ export default function ContactDrawer({
     if (!cancelReasonInput.trim()) return;
     setCancellingFollowUp(true);
     try {
-      let userEmail = null;
-      try {
-        const storedProfile = localStorage.getItem("scm_user_profile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          if (parsed?.email) userEmail = parsed.email;
-        }
-      } catch (_) {}
-
+      const resolvedUserEmail = currentUserProfile?.email || currentUser?.email || undefined;
       const originalDate = contact.followUpDate;
       const cancelReason = cancelReasonInput.trim();
       const payload = {
@@ -716,7 +731,7 @@ export default function ContactDrawer({
         followUpReason: null,
         followUpFixedAt: null,
         followUpUrgentSent: false,
-        userEmail: userEmail || undefined
+        userEmail: resolvedUserEmail
       };
 
       setFollowUpDateInput("");
@@ -849,11 +864,25 @@ export default function ContactDrawer({
       const res = await onSoapVerify(contact);
       if (res) {
         setCarrierResult(res);
-        logActivity(
-          "CARRIER_VERIFIED",
-          `Telecom line verified (${res.carrier || "Carrier"})`,
-          `${res.lineType || "Mobile"} • ${res.attempts || 1} attempt(s)`
-        );
+        const carrierTitle = `Telecom line verified (${res.carrier || "Carrier"})`;
+        const carrierMeta = `${res.lineType || "Mobile"} • Verified via Telecom Service`;
+
+        setActivities((prev) => {
+          // Remove previous CARRIER_VERIFIED entry to prevent stacking/spam
+          const filtered = prev.filter((a) => a.type !== "CARRIER_VERIFIED");
+          const newEntry = {
+            id: `act_${Date.now()}_carrier`,
+            type: "CARRIER_VERIFIED",
+            title: carrierTitle,
+            meta: carrierMeta,
+            timestamp: new Date().toISOString()
+          };
+          const updated = [newEntry, ...filtered];
+          try {
+            localStorage.setItem(`scm_activities_${contact.id}`, JSON.stringify(updated));
+          } catch (_) {}
+          return updated;
+        });
       }
     } finally {
       setVerifying(false);
@@ -882,16 +911,8 @@ export default function ContactDrawer({
     if (!emailSubject.trim() && !emailBody.trim()) return;
     setEmailSending(true);
     try {
-      let userEmail = null;
-      let userName = null;
-      try {
-        const storedProfile = localStorage.getItem("scm_user_profile");
-        if (storedProfile) {
-          const parsed = JSON.parse(storedProfile);
-          if (parsed?.email) userEmail = parsed.email;
-          if (parsed?.name) userName = parsed.name;
-        }
-      } catch (_) {}
+      const resolvedUserEmail = currentUserProfile?.email || currentUser?.email || "scm.project.12@gmail.com";
+      const resolvedUserName = currentUserProfile?.name || currentUser?.name || "Smart Contact Manager User";
 
       const sentSubject = emailSubject.trim() || `Message from SCM for ${contact.name}`;
       const res = await notificationApi.sendEmail({
@@ -899,8 +920,8 @@ export default function ContactDrawer({
         contactName: contact.name,
         subject: sentSubject,
         body: emailBody.trim() || "(No message body)",
-        senderName: userName || undefined,
-        senderEmail: userEmail || undefined
+        senderName: resolvedUserName,
+        senderEmail: resolvedUserEmail
       });
       if (res?.status === "DELIVERED") {
         onNotify?.({
@@ -1109,7 +1130,7 @@ export default function ContactDrawer({
             <div className="mt-4 grid grid-cols-5 gap-1.5">
               <button
                 type="button"
-                onClick={() => handleCopy(contact.phoneNumber, "Phone")}
+                onClick={() => handleCopy(isMasked ? maskPhoneNumber(contact.phoneNumber) : contact.phoneNumber, "Phone")}
                 className="flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-950/60 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-medium text-zinc-700 dark:text-zinc-300 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
               >
                 {copiedField === "Phone" ? (
@@ -1220,12 +1241,17 @@ export default function ContactDrawer({
                   </div>
                 ) : (
                   <>
-                    <div className="space-y-1 bg-zinc-50 dark:bg-zinc-800/40 p-2 rounded-md border border-zinc-200 dark:border-zinc-700/60 text-[11px] font-mono">
+                    <div className="space-y-1 bg-zinc-50 dark:bg-zinc-800/40 p-2.5 rounded-md border border-zinc-200 dark:border-zinc-700/60 text-[11px] font-mono">
                       <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
                         <span><strong className="text-zinc-700 dark:text-zinc-300">From:</strong> "Smart Contact Manager" &lt;scm.project.12@gmail.com&gt;</span>
                       </div>
                       <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
-                        <span className="truncate"><strong className="text-zinc-700 dark:text-zinc-300">To:</strong> {contact.name ? `${contact.name} <${contact.email}>` : contact.email}</span>
+                        <span className="truncate">
+                          <strong className="text-zinc-700 dark:text-zinc-300">Sent By:</strong> {currentUserProfile?.name || currentUser?.name || "User"} ({currentUserProfile?.email || currentUser?.email || "scm.project.12@gmail.com"})
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
+                        <span className="truncate"><strong className="text-zinc-700 dark:text-zinc-300">To:</strong> {contact.name ? `${contact.name} <${isMasked ? maskEmailAddress(contact.email) : contact.email}>` : (isMasked ? maskEmailAddress(contact.email) : contact.email)}</span>
                       </div>
                     </div>
 
@@ -1307,11 +1333,11 @@ export default function ContactDrawer({
               <span className="text-zinc-500 dark:text-zinc-400">Phone</span>
               <button
                 type="button"
-                onClick={() => handleCopy(contact.phoneNumber, "Phone")}
+                onClick={() => handleCopy(isMasked ? maskPhoneNumber(contact.phoneNumber) : contact.phoneNumber, "Phone")}
                 className="inline-flex items-center gap-1.5 font-mono text-xs text-zinc-900 dark:text-zinc-100 hover:text-emerald-600 dark:hover:text-emerald-400"
               >
                 <span>{phoneInfo.flag}</span>
-                <span>{phoneInfo.formatted}</span>
+                <span>{isMasked ? maskPhoneNumber(contact.phoneNumber) : phoneInfo.formatted}</span>
                 <Copy className="w-3 h-3 opacity-60" />
               </button>
             </div>
@@ -1321,10 +1347,10 @@ export default function ContactDrawer({
               {hasEmail ? (
                 <button
                   type="button"
-                  onClick={() => handleCopy(contact.email, "Email")}
+                  onClick={() => handleCopy(isMasked ? maskEmailAddress(contact.email) : contact.email, "Email")}
                   className="inline-flex items-center gap-1.5 font-mono text-xs text-zinc-900 dark:text-zinc-100 hover:text-emerald-600 dark:hover:text-emerald-400 truncate max-w-[230px]"
                 >
-                  <span className="truncate">{contact.email}</span>
+                  <span className="truncate">{isMasked ? maskEmailAddress(contact.email) : contact.email}</span>
                   <Copy className="w-3 h-3 opacity-60 shrink-0" />
                 </button>
               ) : (
@@ -1409,7 +1435,7 @@ export default function ContactDrawer({
                   <div className="text-zinc-600 dark:text-zinc-400 flex items-center justify-between">
                     <span className="truncate max-w-[200px]"><strong>Partner:</strong> {contact.name}</span>
                     <span className="font-mono text-[10px] text-zinc-500">
-                      {contact.email ? contact.email : "No email (Host only)"}
+                      {contact.email ? (isMasked ? maskEmailAddress(contact.email) : contact.email) : "No email (Host only)"}
                     </span>
                   </div>
                 </div>
@@ -1546,10 +1572,24 @@ export default function ContactDrawer({
                 type="button"
                 disabled={verifying}
                 onClick={handleVerifyCarrier}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-[11px] font-medium text-zinc-600 dark:text-zinc-300 transition-colors active:scale-[0.98]"
+                className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium transition-colors active:scale-[0.98] ${
+                  carrierResult
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                }`}
               >
-                <Radio className="w-3 h-3 text-emerald-500" />
-                <span>{verifying ? "Checking..." : "Verify Line"}</span>
+                <Radio className={`w-3 h-3 ${carrierResult ? "text-emerald-400" : "text-emerald-500"}`} />
+                <span>
+                  {verifying
+                    ? "Checking..."
+                    : carrierResult
+                    ? `Verified: ${
+                        carrierResult.carrier?.includes("Jio")
+                          ? "Jio"
+                          : carrierResult.carrier?.split(" ")[0] || "Line"
+                      }`
+                    : "Verify Line"}
+                </span>
               </button>
             </div>
 

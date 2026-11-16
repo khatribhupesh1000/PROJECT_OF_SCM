@@ -2,11 +2,13 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { COUNTRY_DIAL_CODES } from "../components/ContactModal.jsx";
 import GithubAuthModal from "../components/GithubAuthModal.jsx";
+import GoogleAuthModal from "../components/GoogleAuthModal.jsx";
 import { authApi, parseRfc7807Error } from "../services/api.js";
 
 export default function Signup({ onNotify }) {
   const navigate = useNavigate();
   const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [countryCode, setCountryCode] = useState("+91");
   const [form, setForm] = useState({
     name: "",
@@ -22,6 +24,10 @@ export default function Signup({ onNotify }) {
     const params = new URLSearchParams(window.location.search);
     if (params.get("github_modal") === "1" || params.get("github_fallback") === "1") {
       setGithubModalOpen(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    if (params.get("google_modal") === "1" || params.get("google_fallback") === "1") {
+      setGoogleModalOpen(true);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
     const oauthError = params.get("oauth_error");
@@ -127,29 +133,32 @@ export default function Signup({ onNotify }) {
     }
   };
 
-  const handleGoogleSignup = () => {
+  const handleGoogleSignup = async () => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
-      onNotify?.({
-        variant: "warning",
-        title: "Offline Network Detected",
-        detail: "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.",
-        action: (
-          <Link
-            to="/login"
-            className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400 hover:underline text-xs mt-1"
-          >
-            Go to Sign In &rarr;
-          </Link>
-        )
-      });
+      setGoogleModalOpen(true);
       return;
     }
     setLoading(true);
-    const GOOGLE_CLIENT_ID = "";
-    const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
-    const SCOPE = encodeURIComponent("openid profile email");
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "signup" }))}`;
-    window.location.assign(googleAuthUrl);
+    try {
+      const config = await authApi.getGoogleConfig();
+      const liveClientId =
+        config?.clientId ||
+        (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID) ||
+        "1070432793764-a07covnfk3rmpd1bll4d92f88e1umolq.apps.googleusercontent.com";
+
+      if (config?.isLive || liveClientId) {
+        const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
+        const SCOPE = encodeURIComponent("openid profile email");
+        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(liveClientId)}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "signup" }))}`;
+        window.location.assign(googleAuthUrl);
+      } else {
+        setGoogleModalOpen(true);
+      }
+    } catch (_err) {
+      setGoogleModalOpen(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGithubSignup = async () => {
@@ -354,6 +363,19 @@ export default function Signup({ onNotify }) {
       <GithubAuthModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
+        intent="signup"
+        initialValue={form.email}
+        onNotify={onNotify}
+        onSwitchIntent={(targetIntent, mail) =>
+          navigate(targetIntent === "signup" ? "/signup" : "/login", {
+            state: { registeredEmail: mail }
+          })
+        }
+      />
+
+      <GoogleAuthModal
+        isOpen={googleModalOpen}
+        onClose={() => setGoogleModalOpen(false)}
         intent="signup"
         initialValue={form.email}
         onNotify={onNotify}

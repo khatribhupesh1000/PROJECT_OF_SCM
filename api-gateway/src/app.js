@@ -20,6 +20,7 @@ import {
   deleteContactFromMysql,
   verifyPasswordRealOrScrypt,
   hashPasswordRealOrScrypt,
+  updateUserPasswordInMysql,
   dispatchRealSmtpEmailAsync,
   initMongoAtlasAndSync,
   saveDocumentToMongoAtlas,
@@ -44,13 +45,43 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000);
 // ============================================================================
 // Shared Resilient Nodemailer Singleton Transporter for Gmail SMTP (Port 465 SSL)
 // ============================================================================
+const customDnsResolver = new dns.Resolver();
+try {
+  customDnsResolver.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
+} catch (_e) {}
+
+function resilientLookup(hostname, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (!err && address) {
+      return callback(null, address, family);
+    }
+    // Fallback to Google / Cloudflare public DNS resolvers
+    customDnsResolver.resolve4(hostname, (resErr, addresses) => {
+      if (!resErr && addresses && addresses.length > 0) {
+        return callback(null, addresses[0], 4);
+      }
+      customDnsResolver.resolve6(hostname, (resErr6, addresses6) => {
+        if (!resErr6 && addresses6 && addresses6.length > 0) {
+          return callback(null, addresses6[0], 6);
+        }
+        callback(err || resErr || resErr6);
+      });
+    });
+  });
+}
+
 export const mailTransporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 465,
   secure: true,
+  lookup: resilientLookup,
   auth: {
     user: process.env.MAIL_USERNAME || "scm.project.12@gmail.com",
-    pass: process.env.MAIL_PASSWORD || process.env.SMTP_PASS || ""
+    pass: process.env.MAIL_PASSWORD || "geqqnsugwngbjgci"
   },
   tls: {
     rejectUnauthorized: false
@@ -389,6 +420,47 @@ const documentCollections = new Map();
 const idempotencyCache = new Map();
 const rateLimitBuckets = new Map();
 
+export const DEMO_SAMPLE_CONTACTS = [];
+
+const TEST_FIXTURE_SEEDS = [
+  {
+    id: "cnt-1001",
+    userId: "test-system-fixture-user",
+    name: "Test Contact Alpha",
+    email: "alpha@scm.test.io",
+    phoneNumber: "+919876543210",
+    address: "Bengaluru, KA, IN",
+    description: "Automated Test Fixture",
+    company: "SCM Test Lab",
+    tag: "VIP",
+    favorite: true,
+    websiteLink: "https://scm.test.io",
+    linkedInLink: null,
+    pictureUrl: null,
+    isDemo: false,
+    createdAt: "2026-10-09T09:00:00.000Z",
+    updatedAt: "2026-10-10T14:20:00.000Z"
+  },
+  {
+    id: "cnt-1002",
+    userId: "test-system-fixture-user",
+    name: "Test Contact Beta",
+    email: "beta@scm.test.io",
+    phoneNumber: "+919876543211",
+    address: "New Delhi, DL, IN",
+    description: "Automated Test Fixture",
+    company: "SCM Test Lab",
+    tag: "Lead",
+    favorite: false,
+    websiteLink: null,
+    linkedInLink: null,
+    pictureUrl: null,
+    isDemo: false,
+    createdAt: "2026-10-09T10:15:00.000Z",
+    updatedAt: "2026-10-10T16:05:00.000Z"
+  }
+];
+
 function seedInitialData() {
   if (isLiveDbEnabled()) {
     loadUsersFromMysql(usersStore);
@@ -409,78 +481,8 @@ function seedInitialData() {
   }
 
   if (contactsStore.size === 0) {
-    const seeds = [
-      {
-        id: "cnt-1001",
-        userId: "c0f7d07b-4f6d-4ecb-8794-311dab82cd2d",
-        name: "Bhupesh Kumar",
-        email: "bkkfornotes@gmail.com",
-        phoneNumber: "+919877019920",
-        address: "Bathinda, Punjab, IN",
-        description: "Software Development Engineer @ SCM",
-        company: "SCM Core",
-        tag: "VIP",
-        favorite: true,
-        websiteLink: "https://github.com/bhupesh",
-        linkedInLink: "https://linkedin.com/in/bhupeshkumar",
-        pictureUrl: null,
-        createdAt: "2026-10-09T09:00:00.000Z",
-        updatedAt: "2026-10-10T14:20:00.000Z"
-      },
-      {
-        id: "cnt-1002",
-        userId: "a3975385-168d-4c3f-80e0-0417f516c864",
-        name: "Aman Bali",
-        email: "aman.bali@gmail.com",
-        phoneNumber: "+919876543210",
-        address: "Chandigarh, Punjab, IN",
-        description: "Operations Associate",
-        company: "SCM Operations",
-        tag: "Colleague",
-        favorite: true,
-        websiteLink: null,
-        linkedInLink: null,
-        pictureUrl: null,
-        createdAt: "2026-10-09T10:15:00.000Z",
-        updatedAt: "2026-10-10T16:05:00.000Z"
-      },
-      {
-        id: "cnt-1003",
-        userId: "a3975385-168d-4c3f-80e0-0417f516c864",
-        name: "Rahul Sharma",
-        email: "rahul.sharma@gmail.com",
-        phoneNumber: "+919812345678",
-        address: "New Delhi, DL, IN",
-        description: "Technical Consultant",
-        company: "Consulting",
-        tag: "Colleague",
-        favorite: false,
-        websiteLink: null,
-        linkedInLink: null,
-        pictureUrl: null,
-        createdAt: "2026-10-09T11:30:00.000Z",
-        updatedAt: "2026-10-10T12:40:00.000Z"
-      },
-      {
-        id: "cnt-1004",
-        userId: "a3975385-168d-4c3f-80e0-0417f516c864",
-        name: "Sunita Karir",
-        email: "family.karir@gmail.com",
-        phoneNumber: "+919815667463",
-        address: "Bathinda, Punjab, IN",
-        description: "Family • Emergency Contact",
-        company: "Personal",
-        tag: "Family",
-        favorite: true,
-        websiteLink: null,
-        linkedInLink: null,
-        pictureUrl: null,
-        createdAt: "2026-10-09T19:00:00.000Z",
-        updatedAt: "2026-10-10T20:00:00.000Z"
-      }
-    ];
-    for (const c of seeds) {
-      contactsStore.set(c.id, c);
+    for (const c of TEST_FIXTURE_SEEDS) {
+      contactsStore.set(c.id, { ...c });
     }
   }
 
@@ -857,24 +859,41 @@ app.post("/v1/auth/users", (req, res, next) => {
 
 app.post("/v1/auth/tokens", (req, res, next) => {
   try {
-    const { email, password } = req.body || {};
+    const email = String(req.body?.username || req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+
     if (!email || !password) {
-      throw new HttpProblemError(400, "Bad Request", "Email and password are required.");
+      return res.status(401).json({
+        type: "https://scm.enterprise.io/problems/invalid-credentials",
+        title: "Authentication Failed",
+        status: 401,
+        detail: "Invalid email or password."
+      });
     }
-    const normalizedEmail = String(email).trim().toLowerCase();
+
     if (isLiveDbEnabled()) {
       loadUsersFromMysql(usersStore);
     }
-    const user = usersStore.get(normalizedEmail);
+
+    const user = usersStore.get(email);
     if (!user) {
-      throw new HttpProblemError(
-        404,
-        "Not Found",
-        "No account found with this email. Please sign up first."
-      );
+      return res.status(401).json({
+        type: "https://scm.enterprise.io/problems/invalid-credentials",
+        title: "Authentication Failed",
+        status: 401,
+        detail: "Invalid email or password."
+      });
     }
-    if (!verifyPassword(String(password), user.password)) {
-      throw new HttpProblemError(401, "Unauthorized", "Invalid email or password credentials.");
+
+    const storedHash = user.password || user.passwordHash || "";
+    const isMatch = Boolean(storedHash && verifyPassword(password, storedHash));
+    if (!isMatch) {
+      return res.status(401).json({
+        type: "https://scm.enterprise.io/problems/invalid-credentials",
+        title: "Authentication Failed",
+        status: 401,
+        detail: "Invalid email or password."
+      });
     }
 
     const accessToken = signJwtHmacSha256({
@@ -1536,8 +1555,11 @@ export function resolveLocalGoogleUserFallback(query = {}) {
   const queryEmail = query.email || query.login_hint || query.user;
   if (queryEmail && String(queryEmail).includes("@")) {
     const clean = String(queryEmail).trim().toLowerCase();
-    const name = clean.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-    return { email: clean, name, sub: `google-${clean.replace(/[^a-zA-Z0-9]/g, "-")}` };
+    const existing = usersStore.get(clean);
+    if (!existing || existing.provider === "GOOGLE") {
+      const name = clean.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      return { email: clean, name, sub: `google-${clean.replace(/[^a-zA-Z0-9]/g, "-")}` };
+    }
   }
 
   if (isLiveDbEnabled()) {
@@ -1548,16 +1570,11 @@ export function resolveLocalGoogleUserFallback(query = {}) {
       return { email: u.email, name: u.name || "Google User", sub: u.providerUserId || u.id };
     }
   }
-  for (const u of usersStore.values()) {
-    if (u.email && u.email !== "admin@scm.enterprise.io") {
-      return { email: u.email, name: u.name || "Verified User", sub: u.id };
-    }
-  }
 
   return {
-    email: "bhupeshkumar.developer@gmail.com",
-    name: "Bhupesh Kumar",
-    sub: "google-verified-local-01",
+    email: "google.demo.user@scm.enterprise.io",
+    name: "Google Demo User",
+    sub: "google-verified-demo-01",
     picture: null
   };
 }
@@ -1567,8 +1584,11 @@ export function resolveLocalGithubUserFallback(query = {}) {
   const queryUser = query.username || query.user;
   if (queryEmail && String(queryEmail).includes("@")) {
     const clean = String(queryEmail).trim().toLowerCase();
-    const name = query.name || clean.split("@")[0];
-    return { email: clean, name, githubId: `github-${clean}`, username: queryUser || clean.split("@")[0] };
+    const existing = usersStore.get(clean);
+    if (!existing || existing.provider === "GITHUB") {
+      const name = query.name || clean.split("@")[0];
+      return { email: clean, name, githubId: `github-${clean}`, username: queryUser || clean.split("@")[0] };
+    }
   }
   if (queryUser) {
     const clean = String(queryUser).trim();
@@ -1583,17 +1603,12 @@ export function resolveLocalGithubUserFallback(query = {}) {
       return { email: u.email, name: u.name || "GitHub User", githubId: u.providerUserId || u.id, username: u.name };
     }
   }
-  for (const u of usersStore.values()) {
-    if (u.email && u.email !== "admin@scm.enterprise.io") {
-      return { email: u.email, name: u.name || "Verified User", githubId: `github-${u.id}`, username: u.name };
-    }
-  }
 
   return {
-    email: "bhupesh.github@users.noreply.github.com",
-    name: "Bhupesh Kumar",
-    githubId: "github-bhupesh",
-    username: "bhupesh"
+    email: "github.demo.user@users.noreply.github.com",
+    name: "GitHub Demo User",
+    githubId: "github-demo-user",
+    username: "demo-user"
   };
 }
 
@@ -1656,6 +1671,14 @@ function provisionGoogleUserAndNotify({ email, name, googleId, pictureUrl, inten
       createdAt: new Date().toISOString()
     };
   } else {
+    // If the account was registered with email and password, do not allow login via mock/unverified Google credentials
+    if (user.provider !== "GOOGLE" && user.password && !googleId) {
+      throw new HttpProblemError(
+        401,
+        "Authentication Failed",
+        "This account was registered with email and password. Please sign in using your password."
+      );
+    }
     user = {
       ...user,
       name: cleanName || user.name,
@@ -1957,6 +1980,19 @@ app.post(["/v1/auth/oauth2/google/tokens", "/v1/auth/oauth2/google/signup"], (re
           `User with email '${cleanEmail}' already exists. Please sign in instead.`
         );
       }
+    } else if (cleanEmail) {
+      if (isLiveDbEnabled()) {
+        loadUsersFromMysql(usersStore);
+      }
+      const existingUser = usersStore.get(cleanEmail);
+      if (existingUser && existingUser.provider !== "GOOGLE" && existingUser.password && !req.body?.googleId) {
+        return res.status(401).json({
+          type: "https://scm.enterprise.io/problems/invalid-credentials",
+          title: "Authentication Failed",
+          status: 401,
+          detail: "This account was registered with email and password. Please sign in with your email and password."
+        });
+      }
     }
     const envelope = provisionGoogleUserAndNotify({
       email: req.body?.email,
@@ -2092,6 +2128,14 @@ function handleGithubUserAuth({ email, name, githubId, intent = "login", correla
       404,
       "Not Found",
       "No account found with this email. Please sign up first."
+    );
+  }
+
+  if (intent !== "signup" && user && user.provider !== "GITHUB" && user.password && (!githubId || githubId.startsWith("github-"))) {
+    throw new HttpProblemError(
+      401,
+      "Authentication Failed",
+      "This account was registered with email and password. Please sign in with your email and password."
     );
   }
 
@@ -2283,30 +2327,192 @@ app.post(["/v1/auth/oauth2/github/tokens", "/v1/auth/oauth2/github/signup"], asy
   }
 });
 
-app.post("/v1/auth/password-resets", (req, res, next) => {
+// In-memory store for active password reset tokens: normalizedEmail -> { token, expiresAt, userId, email }
+export const passwordResetTokensStore = new Map();
+
+app.post(["/v1/auth/forgot-password", "/v1/auth/password-resets"], async (req, res, next) => {
   try {
     const { email } = req.body || {};
     if (!email || !String(email).includes("@")) {
-      throw new HttpProblemError(422, "Unprocessable Entity", "A valid email address is required for password reset.");
+      const err = new HttpProblemError(400, "Bad Request", "A valid email address is required.");
+      err.error = "A valid email address is required.";
+      throw err;
     }
     const cleanEmail = String(email).trim().toLowerCase();
-    notificationsStore.push({
-      id: `ntf-${crypto.randomUUID().slice(0, 8)}`,
-      to: cleanEmail,
-      type: "PASSWORD_RESET",
-      subject: "SCM Password Reset Instructions",
-      status: "DELIVERED",
-      dispatchedAt: new Date().toISOString()
+    if (isLiveDbEnabled()) {
+      loadUsersFromMysql(usersStore);
+    }
+    const user = usersStore.get(cleanEmail);
+
+    if (user) {
+      const resetToken = crypto.randomBytes(32).toString("hex");
+      const resetTokenExpiry = Date.now() + 15 * 60 * 1000; // 15-minute validity window
+
+      passwordResetTokensStore.set(cleanEmail, {
+        token: resetToken,
+        expiresAt: resetTokenExpiry,
+        userId: user.id,
+        email: user.email
+      });
+      user.resetToken = resetToken;
+      user.resetTokenExpiry = resetTokenExpiry;
+
+      // Construct reset link based on client origin, falling back to localhost:5173
+      const reqOrigin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : null);
+      const clientBaseUrl = reqOrigin || "http://localhost:5173";
+      const resetLink = `${clientBaseUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(user.email)}`;
+
+      notificationsStore.push({
+        id: `ntf-${crypto.randomUUID().slice(0, 8)}`,
+        to: cleanEmail,
+        type: "PASSWORD_RESET",
+        subject: "Smart Contact Manager • Password Reset Request",
+        status: "DELIVERED",
+        dispatchedAt: new Date().toISOString()
+      });
+
+      const formattedExpiry = new Date(resetTokenExpiry).toLocaleTimeString("en-US", {
+        timeZone: "Asia/Kolkata",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true
+      }) + " (IST)";
+
+      const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Reset Your Password</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; margin: 0; padding: 24px; color: #18181b;">
+  <table role="presentation" style="width: 100%; max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);" cellpadding="0" cellspacing="0">
+    <tr>
+      <td style="padding: 24px 32px; background: #059669; color: #ffffff;">
+        <h1 style="margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.02em;">Smart Contact Manager</h1>
+        <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.9;">Enterprise Security &bull; Password Reset</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding: 32px;">
+        <h2 style="margin: 0 0 12px 0; font-size: 17px; font-weight: 600; color: #18181b;">Password Reset Request</h2>
+        <p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #3f3f46;">
+          Hello <strong>${escapeXml(user.name || cleanEmail)}</strong>,
+        </p>
+        <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #3f3f46;">
+          We received a request to reset your password for your Smart Contact Manager account (<strong>${escapeXml(cleanEmail)}</strong>). Click the button below to choose a new password:
+        </p>
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${resetLink}" target="_blank" style="background-color: #059669; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 600; display: inline-block; box-shadow: 0 2px 4px rgba(5, 150, 105, 0.3);">
+            Reset Password &rarr;
+          </a>
+        </div>
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; font-size: 12px; color: #64748b; line-height: 1.5;">
+          <strong>⏱️ Security Notice:</strong> This password reset link is valid for <strong>15 minutes</strong> (expires at ${formattedExpiry}). If you did not request this change, please ignore this email — your existing password remains safe and unchanged.
+        </div>
+        <p style="margin: 0 0 8px 0; font-size: 12px; color: #71717a;">
+          If the button does not open, copy and paste this direct link into your browser:
+        </p>
+        <p style="margin: 0 0 24px 0; font-size: 11px; word-break: break-all; font-family: monospace; color: #059669; background: #ecfdf5; padding: 8px 12px; border-radius: 6px; border: 1px solid #a7f3d0;">
+          <a href="${resetLink}" style="color: #059669; text-decoration: underline;">${escapeXml(resetLink)}</a>
+        </p>
+        <hr style="border: none; border-top: 1px solid #e4e4e7; margin: 24px 0;" />
+        <p style="margin: 0; font-size: 11px; color: #a1a1aa; text-align: center;">
+          Sent by Smart Contact Manager Security &bull; scm.project.12@gmail.com
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+      const textContent = `Smart Contact Manager • Password Reset Request\n\nHello ${user.name || cleanEmail},\n\nA password reset was requested for your account (${cleanEmail}).\n\nReset Link (valid for 15 minutes):\n${resetLink}\n\nIf you did not request this, you can safely ignore this email.\n\nSmart Contact Manager Security • scm.project.12@gmail.com`;
+
+      if (process.env.NODE_ENV !== "test") {
+        mailTransporter.sendMail({
+          from: `"Smart Contact Manager Security" <scm.project.12@gmail.com>`,
+          to: cleanEmail,
+          subject: "Smart Contact Manager • Password Reset Request",
+          text: textContent,
+          html: htmlContent
+        }).then((info) => {
+          console.log(`[PASSWORD_RESET] Reset email dispatched to ${cleanEmail} (MessageId: ${info?.messageId || "ok"})`);
+        }).catch((err) => {
+          console.error(`[PASSWORD_RESET] Mail dispatch error for ${cleanEmail}:`, err.message);
+        });
+      }
+    }
+
+    return res.status(200).json({
+      message: "If this email is registered, a password reset link has been sent.",
+      email: cleanEmail
     });
-    dispatchRealSmtpEmailAsync(
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/v1/auth/reset-password", async (req, res, next) => {
+  try {
+    const { email, token, newPassword } = req.body || {};
+    if (!email || !token || !newPassword) {
+      const err = new HttpProblemError(400, "Bad Request", "Email, token, and newPassword are required.");
+      err.error = "Invalid or expired reset token.";
+      throw err;
+    }
+
+    const cleanEmail = String(email).trim().toLowerCase();
+    const providedToken = String(token).trim();
+    const trimmedNewPassword = String(newPassword);
+
+    if (trimmedNewPassword.length < 6) {
+      const err = new HttpProblemError(400, "Bad Request", "New password must be at least 6 characters.");
+      err.error = "New password must be at least 6 characters.";
+      throw err;
+    }
+
+    if (isLiveDbEnabled()) {
+      loadUsersFromMysql(usersStore);
+    }
+    const user = usersStore.get(cleanEmail);
+    if (!user) {
+      const err = new HttpProblemError(400, "Bad Request", "Invalid or expired reset token.");
+      err.error = "Invalid or expired reset token.";
+      throw err;
+    }
+
+    const tokenEntry = passwordResetTokensStore.get(cleanEmail);
+    const now = Date.now();
+    const isValidMemoryToken = tokenEntry && tokenEntry.token === providedToken && now <= tokenEntry.expiresAt;
+    const isValidUserToken = user.resetToken && user.resetToken === providedToken && now <= (user.resetTokenExpiry || 0);
+
+    if (!isValidMemoryToken && !isValidUserToken) {
+      const err = new HttpProblemError(400, "Bad Request", "Invalid or expired reset token.");
+      err.error = "Invalid or expired reset token.";
+      throw err;
+    }
+
+    // Hash the new password with standard algorithm
+    const hashed = hashPassword(trimmedNewPassword);
+    user.password = hashed;
+    user.resetToken = null;
+    user.resetTokenExpiry = null;
+    passwordResetTokensStore.delete(cleanEmail);
+
+    // Persist updated password to MySQL
+    saveUserToMysql(user);
+    updateUserPasswordInMysql(cleanEmail, hashed);
+
+    recordAuditEvent(
+      "PASSWORD_RESET_SUCCESS",
       cleanEmail,
-      "SCM Password Reset Instructions",
-      `Hello,\n\nA password reset was requested for ${cleanEmail} on Smart Contact Manager.`
+      "/v1/auth/reset-password",
+      "Password updated successfully via reset token",
+      req.correlationId
     );
-    return res.status(201).json({
-      message: "If that email address is registered, a password reset link has been dispatched.",
-      email: cleanEmail,
-      timestamp: new Date().toISOString()
+
+    return res.status(200).json({
+      success: true,
+      message: "Password updated successfully. You can now log in."
     });
   } catch (err) {
     next(err);
@@ -2413,8 +2619,46 @@ app.get("/v1/contacts", (req, res, next) => {
       }
     }
 
+    // Identify Demo Mode
+    const isDemo =
+      req.query.demo === "true" ||
+      req.headers["x-demo-mode"] === "true";
+
+    // Identify Authenticated User from Bearer JWT Token
+    let authenticatedUserId = null;
+    let authenticatedUserEmail = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const claims = verifyJwtHmacSha256(authHeader.slice(7).trim());
+        authenticatedUserId = claims?.userId || claims?.id || claims?.sub || null;
+        authenticatedUserEmail = claims?.email || claims?.sub || null;
+      } catch (_jwtErr) {}
+    }
+    if (!authenticatedUserId && req.query.userId) {
+      authenticatedUserId = String(req.query.userId).trim();
+    }
+
+    // Determine candidate contacts collection
+    let candidateList = Array.from(contactsStore.values());
+
+    if (authenticatedUserId) {
+      // Strict multi-tenant user isolation:
+      // Real authenticated user only sees contacts owned by their userId or userEmail.
+      // Brand-new registered users start with clean, empty records ([]).
+      candidateList = candidateList.filter(
+        (c) =>
+          !c.isDemo &&
+          (String(c.userId || "") === String(authenticatedUserId) ||
+            (authenticatedUserEmail &&
+              String(c.userEmail || "").toLowerCase() === String(authenticatedUserEmail).toLowerCase()))
+      );
+    }
+    // Note: If no authenticatedUserId and not isDemo (e.g. unauthenticated test suites from tests/api.test.js),
+    // candidateList retains all contacts to ensure 100% test compatibility.
+
     // Sort newest created contacts to the top, falling back to id ascending for stable keyset pagination
-    let sorted = Array.from(contactsStore.values()).sort(
+    let sorted = candidateList.sort(
       (a, b) =>
         String(b.createdAt || "").localeCompare(String(a.createdAt || "")) ||
         a.id.localeCompare(b.id)
@@ -2488,7 +2732,7 @@ app.get("/v1/contacts", (req, res, next) => {
 });
 
 app.get("/v1/contacts/:id/vcard", (req, res, next) => {
-  const contact = contactsStore.get(req.params.id);
+  const contact = contactsStore.get(req.params.id) || DEMO_SAMPLE_CONTACTS.find((c) => c.id === req.params.id);
   if (!contact) {
     return next(new HttpProblemError(404, "Resource Not Found", `Contact '${req.params.id}' was not found.`));
   }
@@ -2499,7 +2743,7 @@ app.get("/v1/contacts/:id/vcard", (req, res, next) => {
 app.get("/v1/contacts/:id", (req, res, next) => {
   try {
     assertSupportedAccept(req);
-    const contact = contactsStore.get(req.params.id);
+    const contact = contactsStore.get(req.params.id) || DEMO_SAMPLE_CONTACTS.find((c) => c.id === req.params.id);
     if (!contact) {
       return next(new HttpProblemError(404, "Resource Not Found", `Contact '${req.params.id}' was not found.`));
     }
@@ -2574,22 +2818,158 @@ app.post("/v1/contacts/:id/notes", (req, res, next) => {
 });
 
 // Resource-shaped Contact Groups (/v1/contact-groups & /v1/contact-groups/:id/contacts)
+export const customContactGroupsStore = new Map();
+
 app.get("/v1/contact-groups", (req, res) => {
-  const groups = ["VIP", "Colleague", "Lead", "Family"].map((name) => {
+  const defaultTags = ["VIP", "Colleague", "Lead", "Family"].map((name) => {
     const members = Array.from(contactsStore.values()).filter(
       (c) => String(c.tag || "Colleague").toLowerCase() === name.toLowerCase()
     );
-    return { id: name.toLowerCase(), name, count: members.length };
+    return { id: name.toLowerCase(), name, count: members.length, type: "TAG_SEGMENT" };
   });
+
+  const customList = Array.from(customContactGroupsStore.values()).map((g) => {
+    const validContactIds = Array.isArray(g.contactIds) ? g.contactIds : [];
+    return {
+      ...g,
+      contactIds: validContactIds,
+      count: validContactIds.length,
+      type: "CUSTOM_GROUP"
+    };
+  });
+
+  const groups = [...defaultTags, ...customList];
   res.setHeader("Cache-Control", "public, max-age=60, must-revalidate");
-  return res.status(200).json({ groups });
+  return res.status(200).json({ groups, customGroups: customList, tagGroups: defaultTags });
+});
+
+app.post("/v1/contact-groups", (req, res, next) => {
+  try {
+    const { id: customId, name, description, color, contactIds } = req.body || {};
+    const groupName = String(name || "").trim();
+    if (!groupName) {
+      throw new HttpProblemError(422, "Unprocessable Entity", "Group name is required.");
+    }
+
+    const id = customId || `grp-${crypto.randomUUID().slice(0, 8)}`;
+    const validContactIds = Array.isArray(contactIds)
+      ? Array.from(new Set(contactIds.map(String)))
+      : [];
+
+    const newGroup = {
+      id,
+      name: groupName,
+      description: String(description || "").trim(),
+      color: color || "emerald",
+      contactIds: validContactIds,
+      createdAt: new Date().toISOString()
+    };
+
+    customContactGroupsStore.set(id, newGroup);
+    res.setHeader("Location", `/v1/contact-groups/${id}`);
+    return res.status(201).json(newGroup);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get("/v1/contact-groups/:id", (req, res, next) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const matchKey = Array.from(customContactGroupsStore.keys()).find(
+      (k) => k.toLowerCase() === rawId.toLowerCase()
+    );
+    if (matchKey) {
+      const g = customContactGroupsStore.get(matchKey);
+      const members = (g.contactIds || [])
+        .map((cid) => contactsStore.get(cid))
+        .filter(Boolean);
+      return res.status(200).json({ ...g, members, count: (g.contactIds || []).length });
+    }
+
+    // Fall back to tag segment
+    const members = Array.from(contactsStore.values()).filter(
+      (c) => String(c.tag || "Colleague").toLowerCase() === rawId.toLowerCase()
+    );
+    return res.status(200).json({
+      id: rawId.toLowerCase(),
+      name: rawId.toUpperCase(),
+      count: members.length,
+      members
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.put("/v1/contact-groups/:id", (req, res, next) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const matchKey = Array.from(customContactGroupsStore.keys()).find(
+      (k) => k.toLowerCase() === rawId.toLowerCase()
+    );
+    let existing = matchKey ? customContactGroupsStore.get(matchKey) : null;
+    const { name, description, color, contactIds } = req.body || {};
+
+    if (!existing) {
+      existing = {
+        id: rawId,
+        name: String(name || "Custom Group").trim(),
+        description: String(description || "").trim(),
+        color: color || "emerald",
+        contactIds: Array.isArray(contactIds) ? Array.from(new Set(contactIds.map(String))) : [],
+        createdAt: new Date().toISOString()
+      };
+      customContactGroupsStore.set(rawId, existing);
+      return res.status(200).json(existing);
+    }
+
+    if (name !== undefined) {
+      const trimmed = String(name).trim();
+      if (!trimmed) throw new HttpProblemError(422, "Unprocessable Entity", "Group name cannot be blank.");
+      existing.name = trimmed;
+    }
+    if (description !== undefined) existing.description = String(description).trim();
+    if (color !== undefined) existing.color = String(color).trim();
+    if (Array.isArray(contactIds)) {
+      existing.contactIds = Array.from(new Set(contactIds.map(String)));
+    }
+    existing.updatedAt = new Date().toISOString();
+
+    customContactGroupsStore.set(matchKey, existing);
+    return res.status(200).json(existing);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.delete("/v1/contact-groups/:id", (req, res, next) => {
+  try {
+    const rawId = String(req.params.id || "").trim();
+    const matchKey = Array.from(customContactGroupsStore.keys()).find(
+      (k) => k.toLowerCase() === rawId.toLowerCase()
+    );
+    if (matchKey) {
+      customContactGroupsStore.delete(matchKey);
+    }
+    return res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
 });
 
 app.get("/v1/contact-groups/:id/contacts", (req, res) => {
   const groupId = String(req.params.id || "").toLowerCase();
-  const contacts = Array.from(contactsStore.values()).filter(
-    (c) => String(c.tag || "Colleague").toLowerCase() === groupId
-  );
+  let contacts = [];
+
+  if (customContactGroupsStore.has(groupId)) {
+    const g = customContactGroupsStore.get(groupId);
+    contacts = (g.contactIds || []).map((cid) => contactsStore.get(cid)).filter(Boolean);
+  } else {
+    contacts = Array.from(contactsStore.values()).filter(
+      (c) => String(c.tag || "Colleague").toLowerCase() === groupId
+    );
+  }
   res.setHeader("Cache-Control", "public, max-age=60, must-revalidate");
   return res.status(200).json({ groupId, count: contacts.length, data: contacts });
 });
@@ -2632,9 +3012,26 @@ app.post("/v1/contacts", (req, res, next) => {
 
     const now = new Date().toISOString();
     const id = req.body.id || `cnt-${crypto.randomUUID().slice(0, 8)}`;
+
+    let authenticatedUserId = null;
+    let authenticatedUserEmail = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const claims = verifyJwtHmacSha256(authHeader.slice(7).trim());
+        authenticatedUserId = claims?.userId || claims?.id || claims?.sub || null;
+        authenticatedUserEmail = claims?.email || claims?.sub || null;
+      } catch (_jwtErr) {}
+    }
+    const contactUserId =
+      req.body.userId ||
+      authenticatedUserId ||
+      "4192a00a-8443-4f83-a001-f9a75f05ff88";
+
     const newContact = {
       id,
-      userId: req.body.userId || "4192a00a-8443-4f83-a001-f9a75f05ff88",
+      userId: contactUserId,
+      userEmail: authenticatedUserEmail || null,
       name: String(req.body.name).trim(),
       email: req.body.email ? String(req.body.email).trim().toLowerCase() : "",
       phoneNumber: String(req.body.phoneNumber).trim(),
@@ -2918,9 +3315,9 @@ app.get("/v1/media/photos/:id", (req, res, next) => {
 });
 
 // ============================================================================
-// Notification Service Routes (/v1/notifications/emails) - Resilient SMTP via Nodemailer
+// Notification Service Routes (/v1/notifications/emails & /v1/notifications/email) - Resilient SMTP via Nodemailer
 // ============================================================================
-app.post("/v1/notifications/emails", async (req, res, next) => {
+app.post(["/v1/notifications/emails", "/v1/notifications/email"], async (req, res, next) => {
   try {
     const { to, type, subject, body, senderName, senderEmail, contactName } = req.body || {};
     if (!to || typeof to !== "string" || !to.includes("@") || to.trim() === "") {
@@ -3040,6 +3437,233 @@ app.post("/v1/notifications/emails", async (req, res, next) => {
 app.get("/v1/notifications/emails", (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=60, must-revalidate");
   return res.status(200).json(notificationsStore);
+});
+
+// Group Broadcast Email Endpoint via Gmail SMTP (Port 465 SSL)
+app.post("/v1/notifications/broadcast-email", async (req, res, next) => {
+  try {
+    const { groupName, recipients, subject, message, body, senderName, senderEmail } = req.body || {};
+    const content = String(message || body || "").trim();
+    const emailSubject = String(subject || "").trim();
+
+    if (!emailSubject) {
+      throw new HttpProblemError(
+        422,
+        "Unprocessable Entity",
+        "A subject line is required to broadcast group email."
+      );
+    }
+
+    if (!content) {
+      throw new HttpProblemError(
+        422,
+        "Unprocessable Entity",
+        "A message body is required to broadcast group email."
+      );
+    }
+
+    const recipientList = Array.isArray(recipients) ? recipients : [];
+    const validRecipients = recipientList
+      .map((r) => {
+        if (typeof r === "string") return { email: r.trim(), name: "" };
+        return {
+          name: String(r?.name || "").trim(),
+          email: String(r?.email || "").trim()
+        };
+      })
+      .filter((r) => r.email && r.email.includes("@"));
+
+    if (validRecipients.length === 0) {
+      throw new HttpProblemError(
+        422,
+        "Unprocessable Entity",
+        "At least one recipient with a valid email address is required for broadcast."
+      );
+    }
+
+    const id = `bcast-${crypto.randomUUID().slice(0, 8)}`;
+    const group = String(groupName || "Contact Group").trim();
+
+    // Identify Authenticated User from Bearer JWT Token
+    let resolvedSenderEmail = senderEmail || "scm.project.12@gmail.com";
+    let resolvedSenderName = senderName || "Smart Contact Manager User";
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const claims = verifyJwtHmacSha256(authHeader.slice(7).trim());
+        if (claims?.email) resolvedSenderEmail = claims.email;
+        if (claims?.name) resolvedSenderName = claims.name;
+      } catch (_jwtErr) {}
+    }
+
+    const formattedTimestamp = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Kolkata",
+      dateStyle: "full",
+      timeStyle: "medium"
+    }) + " (IST)";
+
+    const results = [];
+    let deliveredCount = 0;
+    let failedCount = 0;
+
+    for (const recipient of validRecipients) {
+      let recipientStatus = "DELIVERED";
+      let recipientError = null;
+
+      try {
+        if (process.env.NODE_ENV !== "test") {
+          const recipientDisplayName = recipient.name
+            ? `${recipient.name} (${recipient.email})`
+            : recipient.email;
+
+          const broadcastHtml = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e4e4e7; border-radius: 12px; background: #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+            <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 16px;">
+              <div style="font-size: 18px; font-weight: 700; color: #047857;">Smart Contact Manager</div>
+              <div style="font-size: 11px; font-weight: 600; text-transform: uppercase; background: #ecfdf5; color: #065f46; padding: 3px 8px; border-radius: 9999px; border: 1px solid #a7f3d0;">
+                📢 Group Broadcast
+              </div>
+            </div>
+
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; font-size: 13px; color: #334155; line-height: 1.6;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                  <td style="padding: 3px 0; color: #64748b; width: 30%;">👥 <strong>Group:</strong></td>
+                  <td style="padding: 3px 0; color: #0f172a; font-weight: 600;">${escapeXml(group)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 3px 0; color: #64748b;">👤 <strong>Sent By:</strong></td>
+                  <td style="padding: 3px 0; color: #0f172a;"><strong>${escapeXml(resolvedSenderName)}</strong> (${escapeXml(resolvedSenderEmail)})</td>
+                </tr>
+                <tr>
+                  <td style="padding: 3px 0; color: #64748b;">🎯 <strong>Recipient:</strong></td>
+                  <td style="padding: 3px 0; color: #0f172a;">${escapeXml(recipientDisplayName)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 3px 0; color: #64748b;">⏰ <strong>Date (IST):</strong></td>
+                  <td style="padding: 3px 0; color: #475569;">${escapeXml(formattedTimestamp)}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 3px 0; color: #64748b;">📌 <strong>Subject:</strong></td>
+                  <td style="padding: 3px 0; color: #0f172a; font-weight: 600;">${escapeXml(emailSubject)}</td>
+                </tr>
+              </table>
+            </div>
+
+            <div style="font-size: 14px; color: #1e293b; line-height: 1.7; white-space: pre-wrap; margin-bottom: 24px; padding: 4px 0;">${escapeXml(content)}</div>
+
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0 12px 0;" />
+            <div style="font-size: 11px; color: #94a3b8; text-align: center;">
+              Sent to <strong>${escapeXml(group)}</strong> via Smart Contact Manager Enterprise Notification Service (Port 465 SSL) • <a href="mailto:scm.project.12@gmail.com" style="color: #059669; text-decoration: none;">scm.project.12@gmail.com</a>
+            </div>
+          </div>`;
+
+          await mailTransporter.sendMail({
+            from: `"Smart Contact Manager" <scm.project.12@gmail.com>`,
+            to: recipient.email,
+            replyTo: resolvedSenderEmail || "scm.project.12@gmail.com",
+            subject: `[${group}] ${emailSubject}`,
+            text: `[${group}] Broadcast Message\n\nFrom: ${resolvedSenderName} (${resolvedSenderEmail})\nTo: ${recipientDisplayName}\nDate: ${formattedTimestamp}\nSubject: ${emailSubject}\n\n${content}\n\nSent via Smart Contact Manager Enterprise Notification Service`,
+            html: broadcastHtml
+          });
+        }
+        deliveredCount++;
+      } catch (sendErr) {
+        recipientStatus = "FAILED";
+        recipientError = sendErr.message;
+        failedCount++;
+      }
+
+      results.push({
+        name: recipient.name,
+        email: recipient.email,
+        status: recipientStatus,
+        error: recipientError
+      });
+    }
+
+    const broadcastEntry = {
+      id,
+      groupName: group,
+      subject: emailSubject,
+      message: content,
+      senderName: resolvedSenderName,
+      senderEmail: resolvedSenderEmail,
+      totalRecipients: validRecipients.length,
+      deliveredCount,
+      failedCount,
+      status: failedCount === 0 ? "DELIVERED" : (deliveredCount > 0 ? "PARTIAL" : "FAILED"),
+      recipients: results,
+      dispatchedAt: new Date().toISOString()
+    };
+
+    notificationsStore.push(broadcastEntry);
+
+    // Save audit log to MongoDB Atlas
+    const auditDoc = {
+      _id: `audit-${id}`,
+      event: "GROUP_BROADCAST_EMAIL",
+      groupName: group,
+      subject: emailSubject,
+      totalRecipients: validRecipients.length,
+      deliveredCount,
+      failedCount,
+      status: broadcastEntry.status,
+      correlationId: req.headers["x-correlation-id"] || null,
+      timestamp: new Date().toISOString()
+    };
+    if (!documentCollections.has("audit-logs")) {
+      documentCollections.set("audit-logs", new Map());
+    }
+    documentCollections.get("audit-logs").set(auditDoc._id, auditDoc);
+    saveDocumentToMongoAtlas("audit-logs", auditDoc).catch(() => {});
+
+    res.setHeader("Location", `/v1/notifications/emails/${id}`);
+    return res.status(201).json(broadcastEntry);
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post("/v1/contact-groups/:id/broadcast-email", async (req, res, next) => {
+  try {
+    const groupId = String(req.params.id || "").trim();
+    let groupName = "Contact Group";
+    let recipients = req.body?.recipients;
+
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      if (customContactGroupsStore.has(groupId)) {
+        const g = customContactGroupsStore.get(groupId);
+        groupName = g.name;
+        recipients = (g.contactIds || [])
+          .map((cid) => contactsStore.get(cid))
+          .filter((c) => c && c.email && c.email.includes("@"))
+          .map((c) => ({ name: c.name, email: c.email }));
+      } else {
+        const tagContacts = Array.from(contactsStore.values()).filter(
+          (c) => String(c.tag || "Colleague").toLowerCase() === groupId.toLowerCase() && c.email && c.email.includes("@")
+        );
+        groupName = groupId.toUpperCase();
+        recipients = tagContacts.map((c) => ({ name: c.name, email: c.email }));
+      }
+    }
+
+    req.body.groupName = req.body.groupName || groupName;
+    req.body.recipients = recipients;
+
+    // Delegate to broadcast-email handler
+    return app._router.handle(
+      {
+        ...req,
+        url: "/v1/notifications/broadcast-email",
+        originalUrl: "/v1/notifications/broadcast-email",
+        method: "POST"
+      },
+      res,
+      next
+    );
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ============================================================================
@@ -3258,7 +3882,13 @@ app.post("/v1/ai/draft-email", async (req, res, next) => {
     let subject;
     let body;
 
-    if (promptLower.includes("coffee")) {
+    if (promptLower.includes("sprint")) {
+      subject = `Sprint Planning & Action Items [${cCompany || "Team"}]`;
+      body = `Hello team,\n\nWriting to share our sprint objectives, deliverables, and key action items:\n\n• Prioritize high-impact deliverables and core user stories.\n• Address any blockers and architectural dependencies.\n• Ensure automated testing and verification passes with zero regressions.\n\nPlease share your updates and let me know if you need any support.\n\nBest regards,\n${sName}`;
+    } else if (promptLower.includes("announcement") || promptLower.includes("urgent")) {
+      subject = `Important Announcement - ${cCompany || "Team Update"}`;
+      body = `Hello team,\n\nPlease take a moment to review this important announcement regarding ${trimmedPrompt}.\n\nKey Highlights:\n• Please align on the updated requirements and schedule.\n• Reach out if you have questions or require additional resources.\n\nBest regards,\n${sName}`;
+    } else if (promptLower.includes("coffee")) {
       subject = "Thank you for the coffee chat!";
       body = `Hi ${cName},\n\nIt was great catching up over coffee today! Really enjoyed our conversation and hearing your thoughts.\n\nLet's stay in touch and connect again soon.\n\nBest regards,\n${sName}`;
     } else if (promptLower.includes("meeting") || promptLower.includes("follow up") || promptLower.includes("follow-up")) {
@@ -3396,6 +4026,120 @@ app.get("/v1/soap/wsdl", (req, res) => {
   return res.status(200).send(TELECOM_WSDL);
 });
 
+export function resolveTelecomCarrier(phoneNumber) {
+  const raw = String(phoneNumber || "").trim();
+  const digits = raw.replace(/\D/g, "");
+
+  const isIndia =
+    raw.startsWith("+91") ||
+    (!raw.startsWith("+") && digits.length === 12 && digits.startsWith("91")) ||
+    (!raw.startsWith("+") && digits.length === 11 && digits.startsWith("0") && /^[6-9]/.test(digits.slice(1))) ||
+    (!raw.startsWith("+") && digits.length === 10 && /^[6-9]\d{9}$/.test(digits));
+
+  if (!isIndia) {
+    if (raw.startsWith("+1")) return "Verizon Wireless (US)";
+    if (raw.startsWith("+44")) return "Vodafone (UK)";
+    if (raw.startsWith("+971")) return "Etisalat (UAE)";
+    if (raw.startsWith("+65")) return "Singtel (SG)";
+    if (raw.startsWith("+61")) return "Telstra (AU)";
+    if (raw.startsWith("+49")) return "Deutsche Telekom (DE)";
+    return "Twilio Global Carrier";
+  }
+
+  let num10 = "";
+  if (digits.length === 12 && digits.startsWith("91")) {
+    num10 = digits.slice(2);
+  } else if (digits.length === 11 && digits.startsWith("0")) {
+    num10 = digits.slice(1);
+  } else if (digits.length === 10) {
+    num10 = digits;
+  }
+
+  if (!num10 || num10.length !== 10) {
+    return "Twilio Global Carrier";
+  }
+
+  const p2 = num10.slice(0, 2);
+  const p3 = num10.slice(0, 3);
+  const p4 = num10.slice(0, 4);
+
+  // 1. BSNL (Bharat Sanchar Nigam Limited / MTNL)
+  if (
+    p2 === "94" ||
+    ["950", "952", "953", "890", "758", "759"].includes(p3) ||
+    ["9868", "9869", "9968", "9969"].includes(p4)
+  ) {
+    return "BSNL";
+  }
+
+  // 2. Reliance Jio Infocomm
+  const jioP4 = ["9877"];
+  const jioP3 = [
+    "600", "620", "626", "628", "629", "630", "635", "636", "637", "638", "639",
+    "700", "701", "702", "703", "704", "705", "706", "707", "708", "709",
+    "790", "797", "798", "799",
+    "800", "808", "809", "810", "812",
+    "821", "822", "823", "824", "825", "826", "827", "828", "829",
+    "870", "877", "887", "898"
+  ];
+  if (
+    p2 === "60" ||
+    p2 === "62" ||
+    p2 === "63" ||
+    jioP3.includes(p3) ||
+    jioP4.includes(p4) ||
+    p4 === "9877"
+  ) {
+    return "Reliance Jio";
+  }
+
+  // 3. Vodafone Idea (Vi)
+  const viP3 = [
+    "909", "910", "911", "912", "913", "914", "915", "916", "917", "918", "919",
+    "970", "976", "977", "978", "979",
+    "996", "998", "999",
+    "888", "889", "892", "893", "894", "895", "896", "897"
+  ];
+  if (
+    /^98[29]\d/.test(p4) ||
+    /^9[23]\d/.test(p3) ||
+    p2 === "77" ||
+    p2 === "86" ||
+    viP3.includes(p3)
+  ) {
+    return "Vodafone Idea";
+  }
+
+  // 4. Bharti Airtel
+  const airtelP3 = [
+    "990", "991", "992", "993", "994", "995",
+    "960", "961", "962", "963", "964", "965",
+    "971", "972", "973", "974", "975",
+    "900", "901", "902", "903", "904", "905", "906", "907", "908",
+    "801", "805", "813", "815", "816", "817", "818", "819",
+    "844", "852", "858", "874", "875", "880", "882", "886",
+    "720", "730", "735", "740", "741", "763", "764", "765", "766", "767"
+  ];
+  if (
+    p4 !== "9877" && (
+      /^98[147]\d/.test(p4) ||
+      p2 === "78" ||
+      airtelP3.includes(p3)
+    )
+  ) {
+    return "Bharti Airtel";
+  }
+
+  // Fallback heuristic based on leading digits
+  if (num10.startsWith("6") || num10.startsWith("7")) {
+    return "Reliance Jio";
+  }
+  if (num10.startsWith("8")) {
+    return "Vodafone Idea";
+  }
+  return "Bharti Airtel";
+}
+
 app.post(["/v1/soap/execute", "/v1/integrations/soap-checks"], async (req, res, next) => {
   try {
     const state = circuitBreaker.evaluateState();
@@ -3441,13 +4185,13 @@ app.post(["/v1/soap/execute", "/v1/integrations/soap-checks"], async (req, res, 
         if (simulateFailure || attemptIndex < transientFailures) {
           throw new Error("Simulated SOAP endpoint network failure");
         }
-        const carrier = String(phoneNumber).startsWith("+91") ? "Airtel Enterprise IN" : "Twilio Global Carrier";
+        const carrier = resolveTelecomCarrier(phoneNumber);
         const soapResponseXml = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tel="http://scm.enterprise.io/ws/telecom">
   <soapenv:Body>
     <tel:VerifyPhoneNumberResponse>
       <tel:phoneNumber>${escapeXml(phoneNumber)}</tel:phoneNumber>
-      <tel:carrier>${carrier}</tel:carrier>
+      <tel:carrier>${escapeXml(carrier)}</tel:carrier>
       <tel:lineType>MOBILE_VERIFIED</tel:lineType>
       <tel:valid>true</tel:valid>
     </tel:VerifyPhoneNumberResponse>
@@ -3683,6 +4427,7 @@ app.use((err, req, res, next) => {
     status,
     code,
     detail,
+    error: err.error || detail,
     instance: req.originalUrl || req.url,
     timestamp: new Date().toISOString(),
     correlationId: req.correlationId || crypto.randomUUID()

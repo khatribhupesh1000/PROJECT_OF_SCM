@@ -306,13 +306,28 @@ export function maskPhoneNumber(phone) {
   const phoneInfo = formatPhoneWithFlag(raw);
   const formatted = phoneInfo.formatted !== "—" ? phoneInfo.formatted : raw;
 
+  // Handle standard national/international patterns cleanly:
+  // US format: +1 (XXX) XXX-XXXX -> +1 (XXX) XXX-****
+  if (/^\+1\s\(\d{3}\)\s\d{3}-\d{4}$/.test(formatted)) {
+    return formatted.replace(/-\d{4}$/, "-****");
+  }
+  // India format: +91 XXXXX XXXXX -> +91 XXXXX *****
+  if (/^\+91\s\d{5}\s\d{5}$/.test(formatted)) {
+    return formatted.replace(/\s\d{5}$/, " *****");
+  }
+  // UAE format: +971 XX XXX XXXX -> +971 XX XXX ****
+  if (/^\+971\s\d{2}\s\d{3}\s\d{4}$/.test(formatted)) {
+    return formatted.replace(/\s\d{4}$/, " ****");
+  }
+
+  // Fallback: Mask the last 4 digits cleanly
   let count = 0;
   const chars = formatted.split("");
   for (let i = chars.length - 1; i >= 0; i--) {
     if (/\d/.test(chars[i])) {
       chars[i] = "*";
       count++;
-      if (count >= 5) break;
+      if (count >= 4) break;
     }
   }
   return chars.join("");
@@ -334,8 +349,11 @@ export function maskEmailAddress(email) {
     return `student****@${domain}`;
   }
 
-  if (local.length <= 4) {
+  if (local.length <= 2) {
     return `${local.slice(0, 1)}****@${domain}`;
+  }
+  if (local.length <= 4) {
+    return `${local.slice(0, 2)}****@${domain}`;
   }
   return `${local.slice(0, 4)}****@${domain}`;
 }
@@ -720,12 +738,13 @@ export function parseRfc7807Error(err) {
 }
 
 export const contactApi = {
-  async list({ cursor = null, limit = 25, search = "", favorite = null, tag = null } = {}) {
+  async list({ cursor = null, limit = 25, search = "", favorite = null, tag = null, demo = false } = {}) {
     const params = { limit, _ts: Date.now() };
     if (cursor) params.cursor = cursor;
     if (search && search.trim()) params.search = search.trim();
     if (favorite !== null) params.favorite = favorite;
     if (tag && tag !== "ALL") params.tag = tag;
+    if (demo) params.demo = "true";
     const response = await api.get("/v1/contacts", { params });
     return {
       ...response.data,
@@ -912,7 +931,16 @@ export const authApi = {
   },
 
   async requestPasswordReset(email) {
-    const response = await api.post("/v1/auth/password-resets", { email });
+    const response = await api.post("/v1/auth/forgot-password", { email });
+    return response.data;
+  },
+
+  async resetPassword({ email, token, newPassword }) {
+    const response = await api.post("/v1/auth/reset-password", {
+      email,
+      token,
+      newPassword
+    });
     return response.data;
   },
 
@@ -935,6 +963,171 @@ export const notificationApi = {
       senderEmail,
       contactName,
       type
+    });
+    return response.data;
+  }
+};
+
+export const groupApi = {
+  async getGroups() {
+    const deletedIds = new Set();
+    try {
+      const storedDeleted = localStorage.getItem("scm_deleted_group_ids");
+      if (storedDeleted) {
+        JSON.parse(storedDeleted).forEach((d) => {
+          deletedIds.add(String(d));
+          deletedIds.add(String(d).toLowerCase());
+        });
+      }
+    } catch (_) {}
+
+    try {
+      const response = await api.get("/v1/contact-groups");
+      const custom = response.data?.customGroups || [];
+      // Combine with local custom groups if any
+      let localList = [];
+      try {
+        const stored = localStorage.getItem("scm_custom_groups");
+        localList = stored ? JSON.parse(stored) : [];
+      } catch (_) {}
+
+      const map = new Map();
+      localList.forEach((g) => {
+        if (g && g.id && !deletedIds.has(String(g.id)) && !deletedIds.has(String(g.id).toLowerCase())) {
+          map.set(g.id, g);
+        }
+      });
+
+      custom.forEach((g) => {
+        if (g && g.id && !deletedIds.has(String(g.id)) && !deletedIds.has(String(g.id).toLowerCase())) {
+          const existing = map.get(g.id);
+          const mergedContactIds =
+            Array.isArray(g.contactIds) && g.contactIds.length > 0
+              ? g.contactIds
+              : existing?.contactIds || [];
+          map.set(g.id, { ...existing, ...g, contactIds: mergedContactIds });
+        }
+      });
+
+      return Array.from(map.values());
+    } catch (_err) {
+      try {
+        const stored = localStorage.getItem("scm_custom_groups");
+        const list = stored ? JSON.parse(stored) : [];
+        return list.filter(
+          (g) => g && g.id && !deletedIds.has(String(g.id)) && !deletedIds.has(String(g.id).toLowerCase())
+        );
+      } catch (_) {
+        return [];
+      }
+    }
+  },
+
+  async createGroup({ name, description, color, contactIds }) {
+    const localGroup = {
+      id: `grp-${Date.now()}`,
+      name: String(name || "").trim(),
+      description: String(description || "").trim(),
+      color: color || "emerald",
+      contactIds: Array.isArray(contactIds) ? contactIds : [],
+      createdAt: new Date().toISOString()
+    };
+
+    try {
+      const response = await api.post("/v1/contact-groups", {
+        name,
+        description,
+        color,
+        contactIds
+      });
+      if (response.data?.id) {
+        localGroup.id = response.data.id;
+      }
+    } catch (_err) {}
+
+    try {
+      // Clear from deleted set if recreated
+      const storedDeleted = localStorage.getItem("scm_deleted_group_ids");
+      if (storedDeleted) {
+        const set = new Set(JSON.parse(storedDeleted));
+        set.delete(String(localGroup.id));
+        set.delete(String(localGroup.id).toLowerCase());
+        localStorage.setItem("scm_deleted_group_ids", JSON.stringify(Array.from(set)));
+      }
+    } catch (_) {}
+
+    try {
+      const stored = localStorage.getItem("scm_custom_groups");
+      const list = stored ? JSON.parse(stored) : [];
+      const nextList = [localGroup, ...list.filter((g) => g.id !== localGroup.id)];
+      localStorage.setItem("scm_custom_groups", JSON.stringify(nextList));
+    } catch (_) {}
+
+    return localGroup;
+  },
+
+  async updateGroup(id, { name, description, color, contactIds }) {
+    try {
+      await api.put(`/v1/contact-groups/${id}`, {
+        name,
+        description,
+        color,
+        contactIds
+      });
+    } catch (_err) {}
+
+    try {
+      const stored = localStorage.getItem("scm_custom_groups");
+      const list = stored ? JSON.parse(stored) : [];
+      const updated = list.map((g) =>
+        g.id === id
+          ? {
+              ...g,
+              name: name !== undefined ? name : g.name,
+              description: description !== undefined ? description : g.description,
+              color: color !== undefined ? color : g.color,
+              contactIds: Array.isArray(contactIds) ? contactIds : g.contactIds
+            }
+          : g
+      );
+      localStorage.setItem("scm_custom_groups", JSON.stringify(updated));
+      return updated.find((g) => g.id === id);
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async deleteGroup(id) {
+    try {
+      await api.delete(`/v1/contact-groups/${id}`);
+    } catch (_err) {}
+
+    try {
+      const stored = localStorage.getItem("scm_custom_groups");
+      const list = stored ? JSON.parse(stored) : [];
+      const filtered = list.filter((g) => g.id !== id);
+      localStorage.setItem("scm_custom_groups", JSON.stringify(filtered));
+    } catch (_) {}
+
+    try {
+      const storedDeleted = localStorage.getItem("scm_deleted_group_ids");
+      const set = new Set(storedDeleted ? JSON.parse(storedDeleted) : []);
+      set.add(String(id));
+      set.add(String(id).toLowerCase());
+      localStorage.setItem("scm_deleted_group_ids", JSON.stringify(Array.from(set)));
+    } catch (_) {}
+
+    return true;
+  },
+
+  async broadcastEmail({ groupName, recipients, subject, message, body, senderName, senderEmail }) {
+    const response = await api.post("/v1/notifications/broadcast-email", {
+      groupName,
+      recipients,
+      subject,
+      message: message || body,
+      senderName,
+      senderEmail
     });
     return response.data;
   }

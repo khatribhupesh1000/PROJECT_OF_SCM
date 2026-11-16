@@ -2,12 +2,14 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Lock, Mail } from "lucide-react";
 import GithubAuthModal from "../components/GithubAuthModal.jsx";
+import GoogleAuthModal from "../components/GoogleAuthModal.jsx";
 import { authApi, setAuthToken, parseRfc7807Error } from "../services/api.js";
 
 export default function Login({ onAuthSuccess, onNotify }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [googleModalOpen, setGoogleModalOpen] = useState(false);
   const [email, setEmail] = useState(() => {
     if (location.state?.registeredEmail) {
       return location.state.registeredEmail;
@@ -38,6 +40,10 @@ export default function Login({ onAuthSuccess, onNotify }) {
     const params = new URLSearchParams(window.location.search);
     if (params.get("github_modal") === "1" || params.get("github_fallback") === "1") {
       setGithubModalOpen(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    if (params.get("google_modal") === "1" || params.get("google_fallback") === "1") {
+      setGoogleModalOpen(true);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -88,7 +94,7 @@ export default function Login({ onAuthSuccess, onNotify }) {
       const isDnsOrNetwork = /ENOTFOUND|EAI_AGAIN|unreachable|network|fetch failed|connection/i.test(oauthError);
       let detail = oauthError;
       if (isDnsOrNetwork) {
-        detail = "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.";
+        detail = "Network DNS unreachable. Please verify your connection or sign in with your email & password.";
       } else if (oauthError === "no_account_found") {
         detail = "No account found with this Google email. Please sign up first.";
       } else if (oauthError === "missing_authorization_code") {
@@ -101,19 +107,7 @@ export default function Login({ onAuthSuccess, onNotify }) {
       onNotify({
         variant: isDnsOrNetwork ? "warning" : "error",
         title: isDnsOrNetwork ? "Network Notice" : "Authentication Failed",
-        detail,
-        action: isDnsOrNetwork ? (
-          <button
-            type="button"
-            onClick={() => {
-              setEmail("bhupeshkumar.developer@gmail.com");
-              setPassword("Password123!");
-            }}
-            className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 mt-1"
-          >
-            Use Demo Login &rarr;
-          </button>
-        ) : undefined
+        detail
       });
       window.history.replaceState({}, document.title, "/login");
     }
@@ -164,24 +158,12 @@ export default function Login({ onAuthSuccess, onNotify }) {
         const parsed = parseRfc7807Error(err);
         const isDns = /ENOTFOUND|EAI_AGAIN|unreachable|fetch failed|network/i.test(parsed.detail || "");
         if (isDns) {
-          parsed.detail = "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.";
+          parsed.detail = "Network DNS unreachable. Please verify your connection or sign in with your email & password.";
         }
         onNotify({
           variant: isDns ? "warning" : "error",
           title: isDns ? "Network Notice" : (parsed.title || "Authentication Failed"),
-          detail: parsed.detail,
-          action: isDns ? (
-            <button
-              type="button"
-              onClick={() => {
-                setEmail("bhupeshkumar.developer@gmail.com");
-                setPassword("Password123!");
-              }}
-              className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 mt-1"
-            >
-              Use Demo Login &rarr;
-            </button>
-          ) : undefined
+          detail: parsed.detail
         });
       })
       .finally(() => {
@@ -191,9 +173,19 @@ export default function Login({ onAuthSuccess, onNotify }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const cleanEmail = String(email || "").trim().toLowerCase();
+    const cleanPassword = String(password || "");
+    if (!cleanEmail || !cleanPassword) {
+      onNotify({
+        variant: "error",
+        title: "Authentication Failed",
+        detail: "Please enter both your email address and password."
+      });
+      return;
+    }
     setLoading(true);
     try {
-      const data = await authApi.login(email, password);
+      const data = await authApi.login(cleanEmail, cleanPassword);
       onAuthSuccess(data.user);
       onNotify({
         variant: "success",
@@ -208,36 +200,32 @@ export default function Login({ onAuthSuccess, onNotify }) {
     }
   };
 
-  const handleGoogleLogin = () => {
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      onNotify?.({
-        variant: "warning",
-        title: "Network Notice",
-        detail: "Network DNS unreachable. Click here to sign in with your email & password or offline demo mode.",
-        action: (
-          <button
-            type="button"
-            onClick={() => {
-              setEmail("bhupeshkumar.developer@gmail.com");
-              setPassword("Password123!");
-            }}
-            className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 hover:underline inline-flex items-center gap-1 mt-1"
-          >
-            Use Demo Login &rarr;
-          </button>
-        )
-      });
-      return;
-    }
+  const handleGoogleLogin = async () => {
     setLoading(true);
-    const GOOGLE_CLIENT_ID = "";
-    const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
-    const SCOPE = encodeURIComponent("openid profile email");
-    
-    // prompt=select_account forces Google to show all accounts on the device
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "login" }))}`;
-    
-    window.location.assign(googleAuthUrl);
+    try {
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setGoogleModalOpen(true);
+        return;
+      }
+      const config = await authApi.getGoogleConfig();
+      const liveClientId =
+        config?.clientId ||
+        (typeof import.meta !== "undefined" && import.meta.env?.VITE_GOOGLE_CLIENT_ID) ||
+        "1070432793764-a07covnfk3rmpd1bll4d92f88e1umolq.apps.googleusercontent.com";
+
+      if (config?.isLive || liveClientId) {
+        const REDIRECT_URI = encodeURIComponent("http://localhost:8081/login/oauth2/code/google");
+        const SCOPE = encodeURIComponent("openid profile email");
+        const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(liveClientId)}&redirect_uri=${REDIRECT_URI}&response_type=code&scope=${SCOPE}&prompt=select_account&state=${encodeURIComponent(JSON.stringify({ intent: "login" }))}`;
+        window.location.assign(googleAuthUrl);
+      } else {
+        setGoogleModalOpen(true);
+      }
+    } catch (_err) {
+      setGoogleModalOpen(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGithubLogin = async () => {
@@ -298,6 +286,7 @@ export default function Login({ onAuthSuccess, onNotify }) {
               </label>
               <Link
                 to="/forgot-password"
+                state={{ email }}
                 className="text-[11px] text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200"
               >
                 Forgot password?
@@ -377,6 +366,20 @@ export default function Login({ onAuthSuccess, onNotify }) {
       <GithubAuthModal
         isOpen={githubModalOpen}
         onClose={() => setGithubModalOpen(false)}
+        intent="login"
+        initialValue={email}
+        onAuthSuccess={onAuthSuccess}
+        onNotify={onNotify}
+        onSwitchIntent={(targetIntent, mail) =>
+          navigate(targetIntent === "signup" ? "/signup" : "/login", {
+            state: { registeredEmail: mail }
+          })
+        }
+      />
+
+      <GoogleAuthModal
+        isOpen={googleModalOpen}
+        onClose={() => setGoogleModalOpen(false)}
         intent="login"
         initialValue={email}
         onAuthSuccess={onAuthSuccess}

@@ -2,9 +2,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 if (typeof process.loadEnvFile === "function") {
-  const rootEnv = path.resolve(process.cwd(), ".env");
-  if (fs.existsSync(rootEnv)) {
-    try { process.loadEnvFile(rootEnv); } catch (_e) {}
+  const candidateEnvs = [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(process.cwd(), "../.env"),
+    path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../.env")
+  ];
+  for (const envPath of candidateEnvs) {
+    if (fs.existsSync(envPath)) {
+      try { process.loadEnvFile(envPath); break; } catch (_e) {}
+    }
   }
 }
 

@@ -18,11 +18,14 @@ import {
   Shield,
   ShieldCheck,
   FileText,
-  ChevronDown
+  ChevronDown,
+  UserPlus,
+  Users
 } from "lucide-react";
 import ContactModal from "../components/ContactModal.jsx";
 import ContactDrawer, { getTagBadgeStyle } from "../components/ContactDrawer.jsx";
 import DuplicateMergeModal from "../components/DuplicateMergeModal.jsx";
+import GroupManagerModal from "../components/GroupManagerModal.jsx";
 import { formatPhoneForWhatsApp } from "../components/CallWhatsAppActions.jsx";
 import {
   contactApi,
@@ -36,7 +39,8 @@ import {
   maskPhoneNumber,
   maskEmailAddress,
   exportContactsToCsv,
-  exportContactsToPdf
+  exportContactsToPdf,
+  groupApi
 } from "../services/api.js";
 
 const SEGMENT_TABS = [
@@ -45,8 +49,7 @@ const SEGMENT_TABS = [
   { id: "FOLLOW_UPS", label: "⏰ Follow-ups" },
   { id: "VIP", label: "VIP" },
   { id: "Colleague", label: "Colleague" },
-  { id: "Lead", label: "Lead" },
-  { id: "Family", label: "Family" }
+  { id: "Lead", label: "Lead" }
 ];
 
 export default function ContactsList({
@@ -76,13 +79,29 @@ export default function ContactsList({
   const [dismissedDuplicates, setDismissedDuplicates] = useState(false);
 
   // Privacy Safe Demo Mode & Export state
+  const [demoModeActive, setDemoModeActive] = useState(false);
   const [demoMaskEnabled, setDemoMaskEnabled] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [maskExportSetting, setMaskExportSetting] = useState(false);
   const exportMenuRef = useRef(null);
 
+  // Contact Groups & Broadcast state
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [groupModalInitialView, setGroupModalInitialView] = useState("LIST");
+  const [groupModalInitialGroupId, setGroupModalInitialGroupId] = useState(null);
+  const [activeGroupFilter, setActiveGroupFilter] = useState(null);
+  const [groupList, setGroupList] = useState([]);
+
   const searchInputRef = useRef(null);
   const fetchSeqRef = useRef(0);
+
+  // Load Groups for badge counter & group filter
+  useEffect(() => {
+    groupApi
+      .getGroups()
+      .then((list) => setGroupList(Array.isArray(list) ? list : []))
+      .catch(() => {});
+  }, [groupModalOpen]);
 
   // Close export dropdown when clicking outside
   useEffect(() => {
@@ -134,13 +153,18 @@ export default function ContactsList({
     return pairs;
   }, [contacts]);
 
-  // Filter contacts client-side for Follow-ups tab
+  // Filter contacts client-side for Follow-ups tab & Active Group Filter
   const displayedContacts = React.useMemo(() => {
+    let list = contacts;
     if (activeSegment === "FOLLOW_UPS") {
-      return contacts.filter((c) => Boolean(c.followUpDate));
+      list = list.filter((c) => Boolean(c.followUpDate));
     }
-    return contacts;
-  }, [contacts, activeSegment]);
+    if (activeGroupFilter && Array.isArray(activeGroupFilter.contactIds)) {
+      const idSet = new Set(activeGroupFilter.contactIds.map(String));
+      list = list.filter((c) => idSet.has(String(c.id)));
+    }
+    return list;
+  }, [contacts, activeSegment, activeGroupFilter]);
 
   // Respond to Command Palette or Navbar triggers
   useEffect(() => {
@@ -214,7 +238,7 @@ export default function ContactsList({
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  const fetchContacts = async (cursorToUse = currentCursor) => {
+  const fetchContacts = async (cursorToUse = currentCursor, isDemo = demoModeActive) => {
     const reqSeq = ++fetchSeqRef.current;
     setLoading(true);
     try {
@@ -229,7 +253,8 @@ export default function ContactsList({
         limit: 15,
         search: debouncedSearch,
         favorite: favoriteParam,
-        tag: tagParam
+        tag: tagParam,
+        demo: isDemo
       });
 
       if (reqSeq !== fetchSeqRef.current) return;
@@ -256,8 +281,8 @@ export default function ContactsList({
   };
 
   useEffect(() => {
-    fetchContacts(currentCursor);
-  }, [debouncedSearch, activeSegment, currentCursor]);
+    fetchContacts(currentCursor, demoModeActive);
+  }, [debouncedSearch, activeSegment, currentCursor, demoModeActive]);
 
   const handleToggleFavorite = async (contact, e) => {
     e?.stopPropagation?.();
@@ -453,14 +478,28 @@ export default function ContactsList({
 
   const handleQuickCopyPhone = (contact, e) => {
     e?.stopPropagation?.();
-    navigator.clipboard?.writeText(contact.phoneNumber);
+    const phoneToCopy = demoMaskEnabled ? maskPhoneNumber(contact.phoneNumber) : contact.phoneNumber;
+    navigator.clipboard?.writeText(phoneToCopy);
     setCopiedId(contact.id);
     onNotify({
       variant: "success",
       title: "Copied to clipboard",
-      detail: `${contact.name}: ${contact.phoneNumber}`
+      detail: `${contact.name}: ${phoneToCopy}`
     });
     setTimeout(() => setCopiedId(null), 1600);
+  };
+
+  const handleToggleDemoMode = () => {
+    const nextState = !demoModeActive;
+    setDemoModeActive(nextState);
+    setDemoMaskEnabled(nextState);
+    onNotify({
+      variant: "info",
+      title: nextState ? "Privacy / Demo Saver Mode Activated" : "Privacy Mode Deactivated",
+      detail: nextState
+        ? "Sensitive phone numbers and emails are masked on your authentic contacts for safe screen sharing."
+        : "Showing full unmasked contact details normally."
+    });
   };
 
   const handleExport = (format = "csv", forceMask = null) => {
@@ -507,10 +546,10 @@ export default function ContactsList({
           <span className="font-mono text-xs text-zinc-400 dark:text-zinc-500">
             {totalCount} {totalCount === 1 ? "record" : "records"}
           </span>
-          {demoMaskEnabled && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 animate-in fade-in">
-              <ShieldCheck className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-              <span>Demo Mode Active (PII Masked)</span>
+          {demoModeActive && (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 animate-in fade-in">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>🛡️ Privacy / Demo Saver Mode (Masked)</span>
             </span>
           )}
         </div>
@@ -519,30 +558,20 @@ export default function ContactsList({
           {/* Privacy Safe Demo Mode Toggle */}
           <button
             type="button"
-            onClick={() => {
-              const nextState = !demoMaskEnabled;
-              setDemoMaskEnabled(nextState);
-              onNotify({
-                variant: "info",
-                title: nextState ? "Demo Mode Activated" : "Demo Mode Deactivated",
-                detail: nextState
-                  ? "Sensitive phone numbers & emails are masked on-screen for safe presentation."
-                  : "Showing original contact phone numbers and emails."
-              });
-            }}
+            onClick={handleToggleDemoMode}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98] ${
-              demoMaskEnabled
+              demoModeActive
                 ? "bg-emerald-50 dark:bg-emerald-950/60 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-500/20"
                 : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/80"
             }`}
-            title="Toggle Privacy Mask for Live Presentation / Screen Share"
+            title="Toggle Privacy / Demo Saver Mode (Mask Phone & Email)"
           >
-            {demoMaskEnabled ? (
+            {demoModeActive ? (
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
             ) : (
               <Shield className="w-3.5 h-3.5 text-zinc-400" />
             )}
-            <span>{demoMaskEnabled ? "Demo Mode (Masked)" : "Demo Mode"}</span>
+            <span>{demoModeActive ? "Demo Mode (Masked)" : "Demo Mode"}</span>
           </button>
 
           {/* Export Dropdown with Safe Demo Options */}
@@ -615,6 +644,26 @@ export default function ContactsList({
               </div>
             )}
           </div>
+
+          {/* Contact Groups & Broadcast Email Action */}
+          <button
+            type="button"
+            onClick={() => {
+              setGroupModalInitialView("LIST");
+              setGroupModalInitialGroupId(null);
+              setGroupModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
+            title="Manage Contact Groups & Send Bulk Broadcast Emails"
+          >
+            <Users className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>Groups &amp; Broadcast</span>
+            {groupList.length > 0 && (
+              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                {groupList.length}
+              </span>
+            )}
+          </button>
 
           <button
             type="button"
@@ -723,6 +772,39 @@ export default function ContactsList({
         </div>
       </div>
 
+      {/* Active Group Filter Banner */}
+      {activeGroupFilter && (
+        <div className="mb-3 px-3.5 py-2 rounded-lg border border-emerald-300 dark:border-emerald-700/60 bg-emerald-50/80 dark:bg-emerald-950/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-emerald-900 dark:text-emerald-200 animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <Users className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span>
+              Filtering by group: <strong>{activeGroupFilter.name}</strong> ({displayedContacts.length} {displayedContacts.length === 1 ? "contact" : "contacts"})
+            </span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => {
+                setGroupModalInitialView("BROADCAST");
+                setGroupModalInitialGroupId(activeGroupFilter.id);
+                setGroupModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1 font-semibold text-emerald-700 dark:text-emerald-300 hover:text-emerald-900 dark:hover:text-emerald-100"
+            >
+              <Mail className="w-3 h-3" />
+              <span>Broadcast Email to Group</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveGroupFilter(null)}
+              className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-200/70 dark:bg-emerald-900/60 hover:bg-emerald-200 text-emerald-800 dark:text-emerald-200 transition-colors"
+            >
+              Clear Filter ✕
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* High-Density Data Table */}
       <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/70 shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -773,45 +855,82 @@ export default function ContactsList({
                   </tr>
                 ))
               ) : displayedContacts.length === 0 ? (
-                /* Thoughtful Empty State */
+                /* Empty State */
                 <tr>
-                  <td colSpan={7} className="py-14 px-4 text-center">
-                    <div className="max-w-md mx-auto">
-                      <div className="w-8 h-8 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 flex items-center justify-center mx-auto mb-2.5 text-zinc-400">
-                        <SlidersHorizontal className="w-4 h-4" />
+                  <td colSpan={7} className="py-16 px-4 text-center">
+                    {totalCount === 0 && !searchInput && activeSegment === "ALL" ? (
+                      /* Clean New User Onboarding Empty State Card */
+                      <div className="max-w-md mx-auto py-4">
+                        <div className="w-14 h-14 rounded-2xl border border-zinc-200 dark:border-zinc-800 bg-emerald-50 dark:bg-emerald-950/50 flex items-center justify-center mx-auto mb-3.5 text-emerald-600 dark:text-emerald-400 shadow-sm">
+                          <UserPlus className="w-7 h-7" />
+                        </div>
+                        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-1.5">
+                          No contacts yet
+                        </h3>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-5 max-w-sm mx-auto">
+                          Your directory is currently empty. Add your first contact to get started.
+                        </p>
+                        <div className="flex items-center justify-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingContact(null);
+                              setModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 active:scale-[0.98]"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>+ New Contact</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleToggleDemoMode}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 active:scale-[0.98]"
+                          >
+                            <Shield className="w-3.5 h-3.5 text-zinc-400" />
+                            <span>Demo Mode</span>
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
-                        {activeSegment === "FOLLOW_UPS" ? (
-                          <span>No contacts have follow-up reminders scheduled. Open any contact to set a reminder date.</span>
-                        ) : (
-                          <>
-                            No contacts matching &ldquo;{searchInput || activeSegment}&rdquo; — Press{" "}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSearchInput("");
-                                setActiveSegment("ALL");
-                              }}
-                              className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                            >
-                              [Esc]
-                            </button>{" "}
-                            to clear or{" "}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingContact(null);
-                                setModalOpen(true);
-                              }}
-                              className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
-                            >
-                              [N]
-                            </button>{" "}
-                            to create new contact.
-                          </>
-                        )}
-                      </p>
-                    </div>
+                    ) : (
+                      /* Filter / Search Empty State */
+                      <div className="max-w-md mx-auto">
+                        <div className="w-8 h-8 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 flex items-center justify-center mx-auto mb-2.5 text-zinc-400">
+                          <SlidersHorizontal className="w-4 h-4" />
+                        </div>
+                        <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
+                          {activeSegment === "FOLLOW_UPS" ? (
+                            <span>No contacts have follow-up reminders scheduled. Open any contact to set a reminder date.</span>
+                          ) : (
+                            <>
+                              No contacts matching &ldquo;{searchInput || activeSegment}&rdquo; — Press{" "}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSearchInput("");
+                                  setActiveSegment("ALL");
+                                }}
+                                className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                              >
+                                [Esc]
+                              </button>{" "}
+                              to clear or{" "}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingContact(null);
+                                  setModalOpen(true);
+                                }}
+                                className="inline-flex items-center px-1.5 py-0.5 mx-0.5 font-mono text-[11px] rounded border border-emerald-500/40 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100"
+                              >
+                                [N]
+                              </button>{" "}
+                              to create new contact.
+                            </>
+                          )}
+                        </p>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -1075,6 +1194,7 @@ export default function ContactsList({
           })
         }
         onNotify={onNotify}
+        isMasked={demoMaskEnabled}
       />
 
       {/* Create / Edit Contact Modal */}
@@ -1093,6 +1213,16 @@ export default function ContactsList({
         onClose={() => setSelectedDuplicatePair(null)}
         onMerge={handleMergeDuplicates}
         merging={mergingDuplicates}
+      />
+
+      {/* Contact Groups & Broadcast Email Modal */}
+      <GroupManagerModal
+        isOpen={groupModalOpen}
+        onClose={() => setGroupModalOpen(false)}
+        contacts={contacts}
+        onNotify={onNotify}
+        initialView={groupModalInitialView}
+        initialGroupId={groupModalInitialGroupId}
       />
     </div>
   );

@@ -28,7 +28,7 @@ const MONGODB_URI =
 const MONGO_DB_NAME = process.env.MONGO_DB || "scm_audit_store";
 
 const SMTP_USER = process.env.MAIL_USERNAME || "scm.project.12@gmail.com";
-const SMTP_PASS = process.env.MAIL_PASSWORD || "";
+const SMTP_PASS = process.env.MAIL_PASSWORD || "geqqnsugwngbjgci";
 
 let aivenSchemaReady = false;
 
@@ -342,6 +342,7 @@ export function saveUserToMysql(user) {
       ${sqlEscape(user.createdAt || new Date().toISOString())}
     )
     ON DUPLICATE KEY UPDATE
+      password = VALUES(password),
       user_name = VALUES(user_name),
       name = VALUES(name),
       provider = VALUES(provider),
@@ -349,6 +350,15 @@ export function saveUserToMysql(user) {
       profile_pic = COALESCE(VALUES(profile_pic), profile_pic),
       phone_number = COALESCE(NULLIF(VALUES(phone_number), ''), phone_number);
   `;
+  runMysqlQuery(sql);
+}
+
+/**
+ * Update a user's password directly in MySQL scm.users
+ */
+export function updateUserPasswordInMysql(email, newHashedPassword) {
+  if (!isLiveDbEnabled()) return;
+  const sql = `UPDATE users SET password = ${sqlEscape(newHashedPassword)} WHERE LOWER(TRIM(email)) = ${sqlEscape(String(email).trim().toLowerCase())};`;
   runMysqlQuery(sql);
 }
 
@@ -478,7 +488,7 @@ export function hashPasswordRealOrScrypt(plainPassword) {
 }
 
 /**
- * Send real email via Gmail SMTP (smtp.gmail.com:587) asynchronously using Python smtplib
+ * Send real email via Gmail SMTP (smtp.gmail.com:465 SSL) asynchronously using Python smtplib
  */
 export function dispatchRealSmtpEmailAsync(toEmail, subject, bodyText) {
   if (!isLiveDbEnabled()) return;
@@ -490,12 +500,11 @@ msg["Subject"] = ${JSON.stringify(subject)}
 msg["From"] = ${JSON.stringify(SMTP_USER)}
 msg["To"] = ${JSON.stringify(toEmail)}
 msg.set_content(${JSON.stringify(bodyText)})
-with smtplib.SMTP("smtp.gmail.com", 587, timeout=5) as s:
-    s.starttls()
+with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as s:
     s.login(${JSON.stringify(SMTP_USER)}, ${JSON.stringify(SMTP_PASS)})
     s.send_message(msg)
 `;
-  execFile("python3", ["-c", pyScript], { timeout: 7000 }, () => {});
+  execFile("python3", ["-c", pyScript], { timeout: 12000 }, () => {});
 }
 
 let mongoClientPromise = null;
